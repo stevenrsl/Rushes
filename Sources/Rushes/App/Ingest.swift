@@ -306,7 +306,12 @@ final class Ingest {
         planTask = Task.detached(priority: .userInitiated) {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            let plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives)
+            let plan = {
+                var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives)
+                plan.drives = drives.map(\.path)
+                plan.generation = generation
+                return plan
+            }()
             await MainActor.run {
                 guard generation == self.planGeneration else { return }
                 self.plan = plan
@@ -327,7 +332,7 @@ final class Ingest {
         let template = NameTemplate(settings.namePattern)
         if cards.isEmpty { reasons.append("Insère une carte ou ajoute un dossier.") }
         else if isScanning { reasons.append("Lecture des cartes en cours…") }
-        else if isPlanning, plan.groups.isEmpty { reasons.append("Préparation de l'aperçu…") }
+        else if isPlanning || !isCurrent { reasons.append("Préparation de l'aperçu…") }
         else if readyCards.isEmpty { reasons.append("Aucune carte sélectionnée.") }
         if drives.isEmpty { reasons.append("Choisis un disque de destination.") }
         for drive in drives where !drive.isOnline { reasons.append("« \(drive.name) » n'est pas branché.") }
@@ -339,9 +344,30 @@ final class Ingest {
         if !template.isUnique { reasons.append("Le modèle doit contenir {NUM} ou {ORIG}, sinon deux photos auraient le même nom.") }
         if !plan.conflicts.isEmpty { reasons.append("\(plan.conflicts.count) nom\(plan.conflicts.count > 1 ? "s" : "") déjà pris : rien ne sera remplacé.") }
         for drive in onlineDrives {
-            if let free = drive.available, free < plan.bytesToCopy {
-                reasons.append("Pas assez de place sur « \(drive.name) » : il manque \(Format.bytes(plan.bytesToCopy - free)).")
+            // With a margin: a disk filled to its last byte fails in the middle
+            // of the night, and the folders, the manifests and exFAT's large
+            // clusters all take a little more than the files themselves.
+            let needed = plan.bytesToCopy + max(64 << 20, plan.bytesToCopy / 100)
+            if let free = drive.available, free < needed {
+                reasons.append("Pas assez de place sur « \(drive.name) » : il manque \(Format.bytes(needed - free)).")
             }
+        }
+        // Two folders on one disk are one copy, however they are named. Saying
+        // "sur deux disques" then would be the one lie that matters.
+        var volumes: [String: String] = [:]
+        for drive in onlineDrives {
+            let volume = VolumeWatcher.volume(of: drive.url)?.path ?? drive.url.path
+            if let first = volumes[volume], first != drive.name {
+                reasons.append("« \(first) » et « \(drive.name) » sont sur le même disque : ce ne serait qu'une seule copie.")
+            } else if volumes[volume] == nil {
+                volumes[volume] = drive.name
+            }
+        }
+        // The copy in progress is named `.<name>.rushes-partial`, sixteen
+        // characters longer: a name the drive would accept, but its partial
+        // not, fails file by file all night.
+        if let long = plan.toCopy.flatMap(\.files).first(where: { $0.name.utf8.count + 16 > 255 }) {
+            reasons.append("« \(long.name) » est trop long pour être écrit : raccourcis le modèle de nom.")
         }
         if reasons.isEmpty, plan.toCopy.isEmpty, !plan.groups.isEmpty {
             if plan.unticked == plan.groups.count {
@@ -376,16 +402,24 @@ final class Ingest {
     /// ejecting a card is the moment it gets formatted.
     var completeCards: [Card] { readyCards.filter { $0.scan?.isComplete == true } }
 
-    var canStart: Bool { blockers.isEmpty && !plan.toCopy.isEmpty && !isCopying }
+    /// The plan on screen is the one the current cards, drives and settings
+    /// make. Anything else must not be started, whatever the button says.
+    private var isCurrent: Bool {
+        plan.generation == planGeneration && plan.drives == onlineDrives.map(\.url.path)
+    }
+
+    var canStart: Bool { blockers.isEmpty && !plan.toCopy.isEmpty && !isCopying && isCurrent }
 
     // MARK: Backup
 
     func start() {
         guard canStart else { return }
+        // The plan's own drives, not today's: the two are equal here, and this
+        // is the pair that was counted, named and checked against.
+        let drives = plan.drives.map { URL(fileURLWithPath: $0) }
         settings.recentClients = IngestSettings.remembering(settings.client, in: settings.recentClients)
         settings.recentProjects = IngestSettings.remembering(settings.project, in: settings.recentProjects)
         let plan = plan
-        let drives = onlineDrives.map(\.url)
         cancelFlag.reset()
         phase = .copying
         progress = BackupProgress()

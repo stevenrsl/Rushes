@@ -49,6 +49,12 @@ struct PlannedGroup: Identifiable, Hashable, Sendable {
 struct IngestPlan: Sendable {
     var groups: [PlannedGroup] = []
     var shootFolders: [String] = []
+    /// The drives this plan was made for, and the change it was made from: a
+    /// plan is only ever run against the drives it counted, and never while a
+    /// newer one is being made. A name typed a second before ⌘↩ would
+    /// otherwise be copied under the name before it.
+    var drives: [String] = []
+    var generation = 0
 
     var toCopy: [PlannedGroup] { groups.filter { $0.status == .new } }
     var filesToCopy: Int { toCopy.reduce(0) { $0 + $1.files.count } }
