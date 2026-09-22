@@ -41,6 +41,10 @@ struct PlannedGroup: Identifiable, Hashable, Sendable {
     /// Files of a kind left unticked, which stay on the card.
     let leftOut: [MediaFile]
     let status: GroupStatus
+    /// Where a shot already saved was found, which is not always tonight's
+    /// folder: a card kept from yesterday is recognised under yesterday's
+    /// client, and stays there.
+    var savedIn: String?
 
     var id: String { sourceID + "/" + group.key }
     var size: Int64 { files.reduce(0) { $0 + $1.file.size } }
@@ -49,6 +53,9 @@ struct PlannedGroup: Identifiable, Hashable, Sendable {
 struct IngestPlan: Sendable {
     var groups: [PlannedGroup] = []
     var shootFolders: [String] = []
+    /// The name pattern it used, written into the journal so a folder can be
+    /// explained months later.
+    var namePattern = ""
     /// The drives this plan was made for, and the change it was made from: a
     /// plan is only ever run against the drives it counted, and never while a
     /// newer one is being made. A name typed a second before ⌘↩ would
@@ -135,7 +142,8 @@ enum Planner {
         settings: IngestSettings,
         fixedDay: ShootDay?,
         drives: [URL],
-        index: (URL, String) -> DestinationIndex = DestinationIndex.load
+        index: (URL, String) -> DestinationIndex = DestinationIndex.load,
+        journal: (URL) -> DriveJournal = DriveJournal.load
     ) -> IngestPlan {
         let template = NameTemplate(settings.namePattern)
         let folderTemplate = NameTemplate(settings.folderPattern)
@@ -149,6 +157,18 @@ enum Planner {
             if a.0.id != b.0.id { return order[a.0.id]! < order[b.0.id]! }
             return a.1.key < b.1.key
         }
+
+        var journals: [String: DriveJournal] = [:]
+        func journalFor(_ drive: URL) -> DriveJournal {
+            if let found = journals[drive.path] { return found }
+            let loaded = journal(drive)
+            journals[drive.path] = loaded
+            return loaded
+        }
+        // A backup that never wrote its closing line was cut off. What it did
+        // verify is known good and is skipped whatever the setting says, or
+        // "Reprendre" would copy the whole card again under new numbers.
+        let skipSaved = settings.skipAlreadyCopied || drives.contains { journalFor($0).interrupted }
 
         var indexes: [String: DestinationIndex] = [:]
         func indexFor(_ drive: URL, _ folder: String) -> DestinationIndex {
@@ -196,14 +216,26 @@ enum Planner {
             }
             if !folders.contains(shootFolder) { folders.append(shootFolder) }
 
+            // Tonight's folder knows a card that was not formatted; the drive's
+            // journal knows it whatever it was filed under, so renaming the
+            // client does not file yesterday's shots under tonight's.
             let copiedEverywhere = !drives.isEmpty && drives.allSatisfy { drive in
                 let known = indexFor(drive, shootFolder).fingerprints
-                return kept.allSatisfy { known.contains($0.fingerprint) }
+                let journal = journalFor(drive)
+                return kept.allSatisfy { known.contains($0.fingerprint) || journal.holds($0.fingerprint, on: drive) }
             }
-            if copiedEverywhere, settings.skipAlreadyCopied {
+            if copiedEverywhere, skipSaved {
+                var folder: String?
+                for drive in drives {
+                    if let path = journalFor(drive).saved[anchor.fingerprint]?.path {
+                        folder = (path as NSString).deletingLastPathComponent
+                        break
+                    }
+                }
                 planned.append(PlannedGroup(
                     group: group, sourceID: source.id, volumeName: source.volumeName, day: day,
-                    baseName: "", shootFolder: shootFolder, files: [], leftOut: leftOut, status: .alreadyCopied
+                    baseName: "", shootFolder: shootFolder, files: [], leftOut: leftOut, status: .alreadyCopied,
+                    savedIn: folder ?? shootFolder
                 ))
                 continue
             }
@@ -216,7 +248,12 @@ enum Planner {
                     if let expression = template.counterExpression(values) {
                         for drive in drives {
                             let stems = indexFor(drive, shootFolder).stems
-                            let pool = category.map { stems[$0] ?? [] } ?? stems.values.flatMap { $0 }
+                            // The names lying there, and the names this drive
+                            // has handed out before: a shot sorted out, or a
+                            // folder moved to an archive, must not give its
+                            // number to another shot.
+                            let pool = (category.map { stems[$0] ?? [] } ?? stems.values.flatMap { $0 })
+                                + journalFor(drive).names(in: shootFolder, category: category)
                             for stem in pool {
                                 let range = NSRange(stem.startIndex..., in: stem)
                                 guard let match = expression.firstMatch(in: stem, range: range),

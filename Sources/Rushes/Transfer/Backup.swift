@@ -52,6 +52,19 @@ enum Backup {
 
         sweepPartials(plan, drives: drives)
 
+        // Every drive is told a backup has begun. Cut off before the closing
+        // line, the journal says so by itself, and the next run trusts what it
+        // verified rather than copying the card again.
+        let id = UUID().uuidString
+        let start = JournalLine(kind: .start, backup: id, at: Date(), version: Bundle.main.version, pattern: plan.namePattern)
+        for drive in drives {
+            do {
+                try Journal.append([start], on: drive)
+            } catch {
+                report.failures.append(.init(file: Journal.fileName, message: error.localizedDescription))
+            }
+        }
+
         var entries: [String: [Manifest.Entry]] = [:]
         var lastReport = Date.distantPast
 
@@ -102,6 +115,22 @@ enum Backup {
                         fingerprint: planned.file.fingerprint,
                         captured: group.group.captureDate
                     ))
+                    // Written now, not at the end: this line is what a backup
+                    // that never ends leaves behind.
+                    let line = JournalLine(
+                        kind: .file, backup: id, at: Date(),
+                        path: planned.relativePath, shoot: group.shootFolder,
+                        fingerprint: planned.file.fingerprint, xxh64: hash, size: planned.file.size,
+                        original: planned.file.relativePath, volume: group.volumeName,
+                        category: group.group.category.rawValue
+                    )
+                    for drive in drives {
+                        do {
+                            try Journal.append([line], on: drive)
+                        } catch {
+                            report.failures.append(.init(file: Journal.fileName, message: error.localizedDescription))
+                        }
+                    }
                 } catch is CancellationError {
                     report.cancelled = true
                     break outer
@@ -136,6 +165,15 @@ enum Backup {
                 }
             }
         }
+        // The closing line comes last, and only if nothing was left undone:
+        // until it is there, this backup counts as unfinished, and the next
+        // plan skips what it verified whatever the setting says. That is what
+        // "Reprendre" used to keep in memory, and lost when the app quit.
+        if report.succeeded {
+            let end = JournalLine(kind: .end, backup: id, at: now)
+            for drive in drives { try? Journal.append([end], on: drive) }
+        }
+
         if let drive = drives.first {
             report.folders = plan.shootFolders.map { $0.isEmpty ? drive : drive.appendingPathComponent($0) }
         }

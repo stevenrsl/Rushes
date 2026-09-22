@@ -46,7 +46,19 @@ two folders and checked in 2.8 s, so the card reader is always the limit.
 **The drive keeps the history, not the Mac.** Each backup writes `_RUSHES/<yyMMdd-HHmmss>.json`
 and `.csv` in the shoot's folder on every drive: card path, new path, size, xxh64, fingerprint.
 It is the only place the camera's names survive the renaming ("the client wants DSC01234"), and
-how a card that was not formatted is recognised the next night. There is no database.
+it travels with the folder when the shoot is archived. There is no database.
+
+Beside it, `_RUSHES/journal.jsonl` at the **drive's root** holds one line per file, appended and
+flushed the moment that file is verified, between a `start` and an `end` line per backup
+(`Journal`, `DriveJournal`). The manifests are written when a backup ends, which is too late for
+three questions: what survived a backup that never ended (a `start` with no `end` is resumed,
+and skipping is forced for what it verified, whatever the setting says); where a shot went
+whatever it was filed under (rename the client and yesterday's card is still recognised, and
+stays in yesterday's folder); and which numbers are already spoken for (sort out some rejects or
+empty the drive, and those numbers are still not handed out twice). It is derived: every line is
+also in a manifest, so deleting it costs those three answers until the next backup, never a
+file. It is read once per state of itself and kept in memory, because a plan is made again at
+every keystroke.
 
 **A shot is skipped only if every drive still has it.** The manifest is a memory, not a proof:
 a file it lists is counted as saved only if it is lying at its path, at its size
@@ -69,7 +81,7 @@ Sources/Rushes/
   Model/      MediaFile (roles, extensions per brand), Grouping (DCF objects), CardScanner
               (+ CameraBrand), CaptureDates (EXIF via ImageIO), Cameras (identity, letters),
               Naming (ShootDay, NameTemplate, presets, Sanitize, FolderLayout), Settings,
-              Plan (Planner, DestinationIndex), History
+              Plan (Planner, DestinationIndex), History, Journal (per-drive record)
   Transfer/   XXHash64, Copier (one file, every drive, checked), Backup (a whole plan +
               manifests), Volumes (mount watching, free space, eject)
   App/        RushesApp (+ AppDelegate: quitting mid-backup is asked), Ingest (the observable
@@ -157,8 +169,10 @@ layout as a name ("byType"), still read. Sidecars go beside their anchor (an XMP
 A typed token used in a folder blocks the button when empty, as in the name.
 
 **Defaults are Steven's own settings** (asked 2026-09-22): Caméra au bout, separate
-counters for photos and videos, already-saved shots copied again rather than skipped, XML left
-on the card, cards ejected. Nothing personal is written in: initials start empty
+counters for photos and videos, already-saved shots skipped, XML left on the card, cards
+ejected. Skipping was off at first, because Steven did not trust a record to prove a file was
+there ("par peur de louper des data", 2026-09-22); it went on the same day, once skipping meant
+the file had been found on every drive at its size rather than merely listed. Nothing personal is written in: initials start empty
 (the placeholder is SR), client and project examples are Kaffi and Lexus. Tests written for the
 old defaults pin them in their fixtures.
 

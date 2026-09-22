@@ -20,7 +20,11 @@ struct IngestSettings: Codable, Hashable, Sendable {
     /// Kinds ticked or unticked by hand, by `FileKind.id`. A kind never
     /// touched follows `FileKind.includedByDefault`.
     var kindChoices: [String: Bool] = [:]
-    var skipAlreadyCopied = false
+    /// On since 2026-09-22, when skipping stopped meaning "the record says so"
+    /// and started meaning "the file is still on every drive, at its size".
+    /// Off, a card kept for a five day shoot is copied again every night under
+    /// new numbers.
+    var skipAlreadyCopied = true
     var ejectWhenDone = true
     var appearance = Appearance.system
     /// Letters chosen by hand, by camera.

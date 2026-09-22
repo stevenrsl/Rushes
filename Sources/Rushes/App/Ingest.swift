@@ -76,10 +76,6 @@ final class Ingest {
     private var planTask: Task<Void, Never>?
     private var planGeneration = 0
     private var activity: NSObjectProtocol?
-    /// After a backup cut off or failed: what was checked is skipped even when
-    /// the setting copies saved shots again, or "Reprendre" would copy the
-    /// whole card a second time under new numbers.
-    private var resuming = false
     /// Set while the app is on its way out: see `stopForQuit`.
     private var onQuit: (() -> Void)?
     private var lastSample: (date: Date, read: Int64, done: Int64)?
@@ -301,8 +297,7 @@ final class Ingest {
         let sources = readyCards.map { card in
             PlanSource(id: card.id, volumeName: card.name, cameraLabel: card.cameraLabel, groups: card.scan!.groups)
         }
-        var settings = settings
-        if resuming { settings.skipAlreadyCopied = true }
+        let settings = settings
         let fixedDay = fixedDay
         let drives = onlineDrives.map(\.url)
         planTask = Task.detached(priority: .userInitiated) {
@@ -312,6 +307,7 @@ final class Ingest {
                 var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives)
                 plan.drives = drives.map(\.path)
                 plan.generation = generation
+                plan.namePattern = settings.namePattern
                 return plan
             }()
             await MainActor.run {
@@ -486,7 +482,6 @@ final class Ingest {
             return
         }
         phase = .finished(report)
-        resuming = !report.succeeded
         refreshDrives()
         notify(report)
         if report.succeeded, settings.ejectWhenDone, !completeCards.isEmpty {
