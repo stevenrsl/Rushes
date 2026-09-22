@@ -19,6 +19,9 @@ struct BackupReport: Sendable {
     struct Failure: Sendable, Hashable {
         let file: String
         let message: String
+        /// The card it came from, so a card can be told whether anything of
+        /// its own was left behind. Empty for a failure of the whole backup.
+        var source = ""
     }
 
     var filesCopied = 0
@@ -140,7 +143,7 @@ enum Backup {
                     // is added back so the bar still ends at the end.
                     state.done = before + planned.file.size * Int64(1 + drives.count)
                     let failure = error as? Copier.Failure
-                    report.failures.append(.init(file: planned.file.relativePath, message: error.localizedDescription))
+                    report.failures.append(.init(file: planned.file.relativePath, message: error.localizedDescription, source: group.sourceID))
                     if failure?.fatal == true {
                         report.stopped = error.localizedDescription
                         break outer
@@ -173,6 +176,10 @@ enum Backup {
             let end = JournalLine(kind: .end, backup: id, at: now)
             for drive in drives { try? Journal.append([end], on: drive) }
         }
+        // Before anyone is told a card can be formatted, the drives are asked
+        // to put what they are holding onto the platters. fsync alone leaves
+        // it in the drive's own cache, which a pulled cable empties.
+        for drive in drives { Journal.flushDevice(on: drive) }
 
         if let drive = drives.first {
             report.folders = plan.shootFolders.map { $0.isEmpty ? drive : drive.appendingPathComponent($0) }

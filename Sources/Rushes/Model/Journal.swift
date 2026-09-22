@@ -88,6 +88,16 @@ enum Journal {
         guard fsync(fd) == 0 else { throw JournalError(path: url.path) }
     }
 
+    /// Asks the drive to write what it still holds in its own cache all the
+    /// way down. `fsync` only hands the bytes to the drive; `F_FULLFSYNC` is
+    /// what makes them survive the cable coming out a second later.
+    static func flushDevice(on drive: URL) {
+        let fd = open(url(on: drive).path, O_RDONLY)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        _ = fcntl(fd, F_FULLFSYNC)
+    }
+
     /// Every line the drive holds. A line that will not decode is skipped: the
     /// tail of a journal cut off mid-write must not cost the rest of it.
     static func read(on drive: URL) -> [JournalLine] {

@@ -118,6 +118,16 @@ struct DoneView: View {
                         }
                     }
 
+                    if !ingest.verdicts.isEmpty {
+                        PageSection(title: "Cartes") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(ingest.verdicts) { verdict in
+                                    VerdictRow(verdict: verdict)
+                                }
+                            }
+                        }
+                    }
+
                     if report.stopped != nil || !report.failures.isEmpty {
                         PageSection(title: "Pas copiés") {
                             VStack(alignment: .leading, spacing: 10) {
@@ -157,7 +167,7 @@ struct DoneView: View {
                             .buttonStyle(.accentLink)
                             .font(TypeScale.meta)
                         }
-                        if !ingest.ejected, ingest.completeCards.contains(where: \.isVolume) {
+                        if !ingest.ejected, ingest.ejectableCards.contains(where: \.isVolume) {
                             Button("Éjecter les cartes") {
                                 Task { await ingest.ejectCards() }
                             }
@@ -211,19 +221,63 @@ struct DoneView: View {
 
     private var sentence: String {
         if report.succeeded {
+            // The cards have the last word below, one by one: this line says
+            // only what was done, and never "tu peux formater" in general.
             var text = "Chaque copie a été relue sur le disque et correspond à ce qui a été lu sur la carte."
-            if let warning = ingest.warnings.first {
-                // What stayed behind is said here too: this is the screen read
-                // before a card is formatted.
-                text += " " + warning
-            } else {
-                text += " Tu peux aller dormir."
-            }
+            let held = ingest.verdicts.filter { $0.level != .safe }
+            text += held.isEmpty ? " Tu peux aller dormir." : " Regarde les cartes avant de les formater."
             return text
         }
         if report.cancelled {
             return "\(Format.count(report.filesCopied, "fichier")) copiés et vérifiés avant l'arrêt ; ils seront reconnus à la reprise."
         }
         return "Ce qui a été copié est vérifié. Le reste est listé ci-dessous, rien n'a été remplacé."
+    }
+}
+
+/// One card and what it may do next. The colours are the app's signals: the
+/// deep forest for what is done, peat for what wants a look, sea thrift for
+/// what must not be formatted.
+private struct VerdictRow: View {
+    let verdict: CardVerdict
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(verdict.cardName)
+                        .font(TypeScale.ui)
+                        .foregroundStyle(Palette.ink)
+                    Text(verdict.title)
+                        .font(TypeScale.micro)
+                        .foregroundStyle(tint)
+                }
+                Text(verdict.sentence)
+                    .font(TypeScale.meta)
+                    .foregroundStyle(Palette.inkSoft)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(verdict.cardName), \(verdict.title). \(verdict.sentence)")
+    }
+
+    private var icon: String {
+        switch verdict.level {
+        case .safe: "checkmark.seal"
+        case .check: "eye"
+        case .hold: "exclamationmark.triangle"
+        }
+    }
+
+    private var tint: Color {
+        switch verdict.level {
+        case .safe: Palette.accentInk
+        case .check: Palette.late
+        case .hold: Palette.alert
+        }
     }
 }

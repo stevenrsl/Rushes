@@ -396,9 +396,18 @@ final class Ingest {
         return list
     }
 
-    /// The cards this backup read whole: the others are never ejected, because
-    /// ejecting a card is the moment it gets formatted.
-    var completeCards: [Card] { readyCards.filter { $0.scan?.isComplete == true } }
+    /// What each card was told at the end of the last backup: the page's last
+    /// word, and the one the camera acts on.
+    private(set) var verdicts: [CardVerdict] = []
+
+    /// The cards nothing was left behind on. A card told "ne pas formater" is
+    /// never ejected: ejecting it is the moment it goes back in the camera.
+    var ejectableCards: [Card] {
+        readyCards.filter { card in
+            guard let verdict = verdicts.first(where: { $0.cardID == card.id }) else { return false }
+            return verdict.level != .hold
+        }
+    }
 
     /// The plan on screen is the one the current cards, drives and settings
     /// make. Anything else must not be started, whatever the button says.
@@ -419,6 +428,7 @@ final class Ingest {
         settings.recentProjects = IngestSettings.remembering(settings.project, in: settings.recentProjects)
         let plan = plan
         cancelFlag.reset()
+        verdicts = []
         phase = .copying
         progress = BackupProgress()
         speed = 0
@@ -476,6 +486,10 @@ final class Ingest {
     private func finish(_ report: BackupReport) {
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
         activity = nil
+        verdicts = readyCards.compactMap { card in
+            guard let scan = card.scan else { return nil }
+            return Verdicts.of(cardID: card.id, cardName: card.name, scan: scan, plan: plan, report: report)
+        }
         if let onQuit {
             self.onQuit = nil
             onQuit()
@@ -484,7 +498,7 @@ final class Ingest {
         phase = .finished(report)
         refreshDrives()
         notify(report)
-        if report.succeeded, settings.ejectWhenDone, !completeCards.isEmpty {
+        if report.succeeded, settings.ejectWhenDone, !ejectableCards.isEmpty {
             Task { await ejectCards() }
         }
     }
@@ -493,7 +507,14 @@ final class Ingest {
         let content = UNMutableNotificationContent()
         if report.succeeded {
             content.title = "Sauvegarde vérifiée"
-            content.body = "\(Format.count(report.filesCopied, "fichier")) · \(Format.bytes(report.bytesCopied)) sur \(Format.count(onlineDrives.count, "disque")). Tu peux aller dormir."
+            var body = "\(Format.count(report.filesCopied, "fichier")) · \(Format.bytes(report.bytesCopied)) sur \(Format.count(onlineDrives.count, "disque"))."
+            // The last word is about the cards, because that is what gets
+            // formatted in the morning.
+            let held = verdicts.filter { $0.level != .safe }
+            body += held.isEmpty
+                ? " Toutes les cartes sont formatables. Tu peux aller dormir."
+                : " \(Format.count(held.count, "carte")) à regarder avant de formater."
+            content.body = body
         } else if report.cancelled {
             content.title = "Sauvegarde interrompue"
             content.body = "\(Format.count(report.filesCopied, "fichier")) copiés et vérifiés avant l'arrêt."
@@ -508,7 +529,7 @@ final class Ingest {
 
     /// Ejects the cards that were backed up. Folders added by hand are left.
     func ejectCards() async {
-        let volumes = completeCards.filter(\.isVolume).map(\.url)
+        let volumes = ejectableCards.filter(\.isVolume).map(\.url)
         var refused: [String] = []
         for url in volumes {
             do {

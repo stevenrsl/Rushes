@@ -37,6 +37,16 @@ exFAT images; before that fix every copy was checked and then deleted for want o
 name already taken is a conflict that holds the whole backup back. A copy cut off (cable,
 cancel, full disk) leaves no file that looks finished.
 
+**A card is told whether it may be formatted, one card at a time.** At the end of a backup each
+card gets a verdict (`Verdicts.of`): formatable when every ticked file of that card was copied
+and verified, "à vérifier" when something is on it that nobody could have ticked (a file of a
+kind Rushes does not know), "ne pas formater" when a file failed, the card was read in part, a
+name was already taken, or the backup stopped before reaching the end of it. One card failing
+says nothing about the next. A card told "ne pas formater" is never ejected. Before any of this
+is shown, every drive is asked for `F_FULLFSYNC`: `fsync` only hands the bytes to the drive,
+which still holds them in its own cache. The sentence "tu peux formater" exists nowhere else,
+and never for all the cards at once.
+
 **Verified means read back from the drive.** The card is read once in 8 MB chunks; each chunk
 is hashed (XXH64) and written to every drive in parallel while the next is read. Each drive's
 copy is then read again and hashed. Reads and writes use `F_NOCACHE`: reading back from memory
