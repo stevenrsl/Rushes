@@ -21,7 +21,11 @@ swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app
 `swift test` and `swift build` need `--scratch-path` outside Documents: the folder is synced,
 its file provider puts extended attributes on the build products and codesign refuses them
 (the same trap as Cairn). `build.sh` builds in `/tmp/rushes-build` for that reason, and in
-release by default because the checksum runs over every byte of every card.
+release by default because the checksum runs over every byte of every card. The bundle is
+assembled and signed there too, then copied into `build/` with `ditto --noextattr --norsrc`:
+under Documents the attributes come back between the clean and the signature, the file provider
+adding its own and LaunchServices tagging an app that has been run. Signing outside, then
+copying, is what makes a rebuild after a run work at all.
 
 ## The rules that shape everything
 

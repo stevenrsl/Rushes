@@ -15,30 +15,35 @@ swift build -c "$CONFIG" --scratch-path "$SCRATCH"
 BIN="$(swift build -c "$CONFIG" --scratch-path "$SCRATCH" --show-bin-path)/Rushes"
 
 APP="build/Rushes.app"
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/fr.lproj"
-cp "$BIN" "$APP/Contents/MacOS/Rushes"
-cp Support/Info.plist "$APP/Contents/Info.plist"
+# The bundle is assembled and signed in the scratch folder, not in build/.
+# codesign refuses a bundle carrying extended attributes, and under Documents
+# they come back on their own between the clean and the signature: the file
+# provider adds its own, and LaunchServices tags an app that has been run.
+# Out here nothing puts them back, so one clean holds until the signature.
+STAGE="$SCRATCH/Rushes.app"
+rm -rf "$STAGE"
+mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources/fr.lproj"
+cp "$BIN" "$STAGE/Contents/MacOS/Rushes"
+cp Support/Info.plist "$STAGE/Contents/Info.plist"
 # The only localisation the bundle declares is French, so AppKit draws its own
 # menus (Édition, Fenêtre, Quitter) in French whatever the Mac is set to.
-cp Support/InfoPlist.strings "$APP/Contents/Resources/fr.lproj/InfoPlist.strings"
+cp Support/InfoPlist.strings "$STAGE/Contents/Resources/fr.lproj/InfoPlist.strings"
 if [ -f Support/AppIcon.icns ]; then
-  cp Support/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+  cp Support/AppIcon.icns "$STAGE/Contents/Resources/AppIcon.icns"
 fi
 
-# Copying carries extended attributes across, and codesign refuses a bundle
-# that has any; the file provider can put them back between the clean and the
-# signature, so the pair is retried. Ad-hoc signature: enough to run here.
-# macOS keys the removable volumes permission to it, so a rebuild asks again.
-for attempt in 1 2 3 4 5; do
-  xattr -cr "$APP"
-  if codesign --force --sign - "$APP" >/dev/null 2>&1; then
-    break
-  fi
-  if [ "$attempt" -eq 5 ]; then
-    codesign --force --sign - "$APP"
-  fi
-  sleep 1
-done
+# Copying carries extended attributes across from Support/, so the bundle is
+# cleaned first. Ad-hoc signature: enough to run here. macOS keys the removable
+# volumes permission to it, so a rebuild asks again.
+xattr -cr "$STAGE"
+codesign --force --sign - "$STAGE"
+
+# ditto carries neither extended attributes nor resource forks, so what lands
+# in build/ is the signed bundle and nothing else. Attributes the Mac adds to
+# it afterwards do not touch the signature; only signing minds them.
+rm -rf "$APP"
+mkdir -p build
+ditto --noextattr --norsrc "$STAGE" "$APP"
+codesign --verify --strict "$APP"
 
 echo "$(pwd)/$APP"
