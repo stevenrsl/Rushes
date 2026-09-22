@@ -34,16 +34,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Quitting in the middle of a backup is asked, not refused: the cable
-    /// may need to come out. What was checked is kept either way.
+    /// may need to come out. The app then stops the copy and waits for the
+    /// record to be written, which is the only place tonight's files keep the
+    /// names their camera gave them. Quitting on the spot used to lose it.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let copying = MainActor.assumeIsolated { ingest?.isCopying } ?? false
         guard copying else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "Une sauvegarde est en cours"
-        alert.informativeText = "Quitter l'interrompt. Les fichiers déjà vérifiés restent sur les disques et seront reconnus la prochaine fois."
+        alert.informativeText = "Quitter l'interrompt. Le fichier en cours est effacé des disques, jamais de la carte. Le relevé de ce qui est déjà vérifié est écrit avant de quitter, pour que la reprise le reconnaisse."
         alert.addButton(withTitle: "Continuer la sauvegarde")
         alert.addButton(withTitle: "Quitter")
-        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+        guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        MainActor.assumeIsolated {
+            ingest?.stopForQuit { NSApp.reply(toApplicationShouldTerminate: true) }
+        }
+        return .terminateLater
     }
 }
 

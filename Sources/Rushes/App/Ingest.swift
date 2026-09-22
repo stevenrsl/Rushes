@@ -80,6 +80,8 @@ final class Ingest {
     /// the setting copies saved shots again, or "Reprendre" would copy the
     /// whole card a second time under new numbers.
     private var resuming = false
+    /// Set while the app is on its way out: see `stopForQuit`.
+    private var onQuit: (() -> Void)?
     private var lastSample: (date: Date, read: Int64, done: Int64)?
     private var doneRate: Double = 0
 
@@ -447,6 +449,15 @@ final class Ingest {
 
     func cancel() { cancelFlag.set() }
 
+    /// A quit in the middle of a backup: the copy stops, and the app waits for
+    /// the record to be written before it goes. The names the cameras gave the
+    /// files of tonight live nowhere else.
+    func stopForQuit(_ done: @escaping () -> Void) {
+        guard isCopying else { return done() }
+        onQuit = done
+        cancel()
+    }
+
     private func advance(_ state: BackupProgress) {
         guard isCopying else { return }
         progress = state
@@ -469,6 +480,11 @@ final class Ingest {
     private func finish(_ report: BackupReport) {
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
         activity = nil
+        if let onQuit {
+            self.onQuit = nil
+            onQuit()
+            return
+        }
         phase = .finished(report)
         resuming = !report.succeeded
         refreshDrives()

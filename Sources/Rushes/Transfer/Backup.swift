@@ -50,6 +50,8 @@ enum Backup {
         state.total = plan.bytesToCopy * Int64(1 + drives.count)
         progress(state)
 
+        sweepPartials(plan, drives: drives)
+
         var entries: [String: [Manifest.Entry]] = [:]
         var lastReport = Date.distantPast
 
@@ -140,5 +142,21 @@ enum Backup {
         report.finished = Date()
         publish(force: true)
         return report
+    }
+
+    /// Copies in progress left by a backup that was cut off. They never look
+    /// like finished files, but they hold on to room the drive needs tonight,
+    /// and nothing else would ever come back for them.
+    private static func sweepPartials(_ plan: IngestPlan, drives: [URL]) {
+        for drive in drives {
+            for folder in plan.shootFolders {
+                let shoot = folder.isEmpty ? drive : drive.appendingPathComponent(folder)
+                let walker = FileManager.default.enumerator(at: shoot, includingPropertiesForKeys: nil)
+                while let url = walker?.nextObject() as? URL {
+                    let name = url.lastPathComponent
+                    if name.hasPrefix("."), name.hasSuffix(".rushes-partial") { unlink(url.path) }
+                }
+            }
+        }
     }
 }
