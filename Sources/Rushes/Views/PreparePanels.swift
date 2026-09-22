@@ -12,7 +12,9 @@ struct ShootBlock: View {
                 GridRow {
                     Field(label: "Jour") { dayPicker }
                     Field(label: "Initiales") {
-                        TextField("SR", text: $ingest.settings.initials)
+                        // "SR" alone reads as a value already typed, and the
+                        // field is the one thing nobody checks at 3 a.m.
+                        TextField("Par exemple, SR", text: $ingest.settings.initials)
                     }
                     .frame(width: 110)
                 }
@@ -180,6 +182,7 @@ private struct DriveRow: View {
                 .buttonStyle(.plain)
                 .disabled(ingest.isCopying)
                 .help("Ne plus copier ici")
+                .accessibilityLabel("Ne plus copier sur « \(drive.name) »")
             }
             if drive.isOnline, let total = drive.total, let free = drive.available, total > 0 {
                 Bar(fraction: Double(total - free) / Double(total), height: 4, fill: Palette.hairlineStrong,

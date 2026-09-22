@@ -397,8 +397,10 @@ struct CameraLetterField: View {
         TextField("", text: $text)
             .textFieldStyle(.plain)
             // A grouped Form lays a field out as a labelled row and pushes its
-            // text down; without a label it keeps to the badge.
+            // text down; without a label it keeps to the badge. VoiceOver still
+            // needs one, and a lone letter says nothing on its own.
             .labelsHidden()
+            .accessibilityLabel("Lettre de la caméra")
             .font(.system(size: 12, weight: .bold, design: .rounded))
             .multilineTextAlignment(.center)
             .foregroundStyle(focused ? Palette.ink : Palette.onCamera(text))
