@@ -75,17 +75,25 @@ struct DestinationIndex: Sendable {
     /// Every file's path from the shoot's folder, lower case: APFS and exFAT
     /// are both blind to case.
     var paths: Set<String> = []
+    /// Fingerprints of the files a record lists **and** that are still lying
+    /// there, at their path and at their size.
+    ///
+    /// A record is a memory, not a proof. A file sorted out by hand, a folder
+    /// moved to the archive, a drive emptied for the trip: the record still
+    /// names them, and skipping on its word alone would let a card be
+    /// formatted with no second copy left anywhere. So the shoot's folder is
+    /// walked anyway, and only what answers is counted as saved.
     var fingerprints: Set<String> = []
 
     static func load(drive: URL, shootFolder: String) -> DestinationIndex {
         let folder = shootFolder.isEmpty ? drive : drive.appendingPathComponent(shootFolder)
         var index = DestinationIndex()
         guard FileManager.default.fileExists(atPath: folder.path) else { return index }
-        index.fingerprints = History.fingerprints(in: folder)
         let depth = folder.standardizedFileURL.pathComponents.count
+        var sizes: [String: Int64] = [:]
         let walker = FileManager.default.enumerator(
             at: folder,
-            includingPropertiesForKeys: [.isRegularFileKey],
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         )
         while let url = walker?.nextObject() as? URL {
@@ -93,9 +101,11 @@ struct DestinationIndex: Sendable {
                 walker?.skipDescendants()
                 continue
             }
-            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { continue }
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values?.isRegularFile == true else { continue }
             let relative = url.standardizedFileURL.pathComponents.dropFirst(depth).joined(separator: "/")
             index.paths.insert(relative.lowercased())
+            sizes[relative.lowercased()] = Int64(values?.fileSize ?? 0)
             let folders = Array(relative.split(separator: "/").dropLast().map(String.init))
             switch MediaTypes.role(forExtension: url.pathExtension, folders: folders) {
             case .raw, .jpeg, .heif: index.stems[.photo, default: []].append(url.deletingPathExtension().lastPathComponent)
@@ -103,6 +113,9 @@ struct DestinationIndex: Sendable {
             case .audio: index.stems[.audio, default: []].append(url.deletingPathExtension().lastPathComponent)
             default: break
             }
+        }
+        for entry in History.entries(in: folder) where sizes[entry.path.lowercased()] == entry.size {
+            index.fingerprints.insert(entry.fingerprint)
         }
         return index
     }
@@ -113,10 +126,10 @@ enum Planner {
     ///
     /// Shots are numbered in the order they were taken, all cards together, so
     /// two bodies on one shoot interleave. Numbers carry on from the highest
-    /// already on the drives for the same day, client and project. A shot whose
-    /// files are all listed in the manifests of every drive is left out: on one
-    /// drive only, it is copied again, because a backup that is on one drive
-    /// and not the other is not a backup.
+    /// already on the drives for the same day, client and project. A shot is
+    /// left out only where every drive both lists it and still holds it, at its
+    /// size: on one drive only, or listed but gone, it is copied again, because
+    /// a backup that is on one drive and not the other is not a backup.
     static func plan(
         sources: [PlanSource],
         settings: IngestSettings,

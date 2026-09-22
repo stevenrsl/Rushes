@@ -38,18 +38,21 @@ enum History {
         return f.string(from: date)
     }
 
-    /// Every fingerprint listed under a shoot's folder.
-    static func fingerprints(in shootFolder: URL) -> Set<String> {
+    /// Every file listed under a shoot's folder, newest record last: what was
+    /// saved there, where it was put and how big it was. A record says what
+    /// happened one night; whether the file is still there is another question,
+    /// and the planner answers it by looking (see `DestinationIndex`).
+    static func entries(in shootFolder: URL) -> [Manifest.Entry] {
         let folder = shootFolder.appendingPathComponent(folderName)
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-        var found: Set<String> = []
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
+        var found: [Manifest.Entry] = []
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         for name in names where name.hasSuffix(".json") {
             guard let data = try? Data(contentsOf: folder.appendingPathComponent(name)),
                   let manifest = try? decoder.decode(Manifest.self, from: data)
             else { continue }
-            found.formUnion(manifest.entries.map(\.fingerprint))
+            found.append(contentsOf: manifest.entries)
         }
         return found
     }

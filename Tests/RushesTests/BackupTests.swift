@@ -106,6 +106,18 @@ struct BackupTests {
         )
         #expect(next.alreadyCopied == 3)
         #expect(next.toCopy.map(\.baseName) == ["260921_SR_Kaffi_Lexus_0004"])
+
+        // A record is a memory, not a proof. One shot deleted from a drive is
+        // copied again even though every manifest still lists it, and another
+        // one truncated is not taken for the file it names.
+        try FileManager.default.removeItem(at: driveB.appendingPathComponent("260921_Kaffi_Lexus/PHOTO/JPG/260921_SR_Kaffi_Lexus_0002.JPG"))
+        try Data("not the clip".utf8).write(to: driveA.appendingPathComponent("260921_Kaffi_Lexus/VIDEO/260921_SR_Kaffi_Lexus_0003.MP4"))
+        let third = Planner.plan(
+            sources: [PlanSource(id: card.path, volumeName: "CARD", cameraLabel: "A", groups: again.groups)],
+            settings: settings, fixedDay: nil, drives: drives
+        )
+        #expect(third.alreadyCopied == 1)
+        #expect(third.toCopy.count == 3)
     }
 
     @Test("nothing is ever replaced, and a refused copy leaves nothing behind")

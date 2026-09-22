@@ -29,9 +29,13 @@ release by default because the checksum runs over every byte of every card.
 Formatting is the camera's job, once the backup is verified.
 
 **Nothing on a drive is ever replaced.** A copy is written as `.<name>.rushes-partial` beside
-its final name, read back, and renamed with `renamex_np(…, RENAME_EXCL)` only if it matches. A
-name already taken is a conflict that holds the whole backup back, never an overwrite. A copy
-cut off (cable, cancel, full disk) leaves no file that looks finished.
+its final name, read back, and named only if it matches, with `renamex_np(…, RENAME_EXCL)`.
+exFAT and FAT32, the format the drives are sold in, answer `ENOTSUP` to that call, so there the
+final name is reserved with `open(O_CREAT|O_EXCL)` first and the copy renamed over that
+reservation: still atomic, still never an overwrite (`Copier.name`, measured 2026-09-22 on
+exFAT images; before that fix every copy was checked and then deleted for want of a name). A
+name already taken is a conflict that holds the whole backup back. A copy cut off (cable,
+cancel, full disk) leaves no file that looks finished.
 
 **Verified means read back from the drive.** The card is read once in 8 MB chunks; each chunk
 is hashed (XXH64) and written to every drive in parallel while the next is read. Each drive's
@@ -44,11 +48,19 @@ and `.csv` in the shoot's folder on every drive: card path, new path, size, xxh6
 It is the only place the camera's names survive the renaming ("the client wants DSC01234"), and
 how a card that was not formatted is recognised the next night. There is no database.
 
-**A shot is skipped only if every drive already has it.** On one drive but not the other, it is
-copied again (with new numbers on the first): duplicates are tidiness, a missing copy is loss.
+**A shot is skipped only if every drive still has it.** The manifest is a memory, not a proof:
+a file it lists is counted as saved only if it is lying at its path, at its size
+(`DestinationIndex`). Sorted out by hand, moved to an archive, or on a drive emptied for the
+trip, and it is copied again. On one drive but not the other, likewise (with new numbers on the
+first): duplicates are tidiness, a missing copy is loss. That check is why Steven ticked
+"copier à nouveau" in the first place (2026-09-22: "par peur de louper des data"); the setting
+is still his.
 
-**Nothing is left out silently.** Unticked kinds, proxies, thumbnails and orphan files (Sony's
-MEDIAPRO.XML) are listed under "Laissés sur la carte" with the reason.
+**Nothing is left out silently.** Unticked kinds, proxies, thumbnails, orphan files (Sony's
+MEDIAPRO.XML) and files of a kind nobody listed are all listed under "Laissés sur la carte"
+with the reason. A folder the Mac refuses to open is named too: that card was not read whole,
+so it is never ejected and the pages say so, but it does not hold the backup back, because
+rushes that can be saved tonight are saved tonight.
 
 ## Layout
 
@@ -188,6 +200,15 @@ button, `.accentLink` for the rest, a drawn checkbox, the wash at the top, `late
   made, rather than a false "rien à copier".
 
 The icon is drawn from the same colours (`Tools/make-icon.swift`).
+
+## Before ⌘↩
+
+The plan carries the drives it counted and the change it was made from, and the button waits
+for both to be current: a project typed a second before ⌘↩ used to be copied under the name
+before it, and a drive plugged in at the last moment used to receive a plan that had never
+looked at it. The action bar also holds back a name whose `.rushes-partial` would be too long
+for the drive, two destination folders that turn out to be one disk, and a disk without a
+margin over the bytes to copy. What it cannot hold back it says anyway, in the same line.
 
 ## At night
 

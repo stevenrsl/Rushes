@@ -204,7 +204,7 @@ private struct CopySettings: View {
             Section {
                 Toggle("Ignorer ce qui est déjà sauvegardé sur chaque disque", isOn: $ingest.settings.skipAlreadyCopied)
                 Toggle("Éjecter les cartes quand tout est vérifié", isOn: $ingest.settings.ejectWhenDone)
-                Help("Rushes ne modifie ni n'efface jamais rien sur une carte, et ne remplace jamais un fichier sur un disque. Formate tes cartes dans l'appareil, une fois la sauvegarde vérifiée.")
+                Help("Une prise n'est ignorée que si le relevé la liste et qu'elle est encore là, à la bonne taille, sur chaque disque : un fichier trié, déplacé ou disparu est recopié. Rushes ne modifie ni n'efface jamais rien sur une carte, et ne remplace jamais un fichier sur un disque. Formate tes cartes dans l'appareil, une fois la sauvegarde vérifiée.")
             }
 
             Section {

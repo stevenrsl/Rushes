@@ -137,7 +137,7 @@ struct PreviewBlock: View {
                 group.group.files.filter { !group.leftOut.contains($0) }.map { file in
                     Row(id: file.id, status: .saved, name: file.name, original: file.relativePath,
                         folder: group.shootFolder, size: file.size, camera: label(for: group.sourceID),
-                        note: "Déjà sur chaque disque, d'après les relevés de \(group.shootFolder.isEmpty ? "la destination" : group.shootFolder)")
+                        note: "Sur chaque disque, retrouvé à la bonne taille dans \(group.shootFolder.isEmpty ? "la destination" : group.shootFolder)")
                 }
             }
         case .leftOut:
