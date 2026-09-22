@@ -178,6 +178,13 @@ side), Sans PHOTO/, Tout ensemble; any edit is "Personnalisé". The first versio
 layout as a name ("byType"), still read. Sidecars go beside their anchor (an XMP beside its RAW).
 A typed token used in a folder blocks the button when empty, as in the name.
 
+**A default that changes has to travel.** Settings already saved hold the values of the day they
+were written, so changing a default in the code reaches new installs only. Each change that has
+to reach an existing one gets a number in `IngestSettings.schema` and a line in `migrate`,
+applied once on the next launch and written straight back. Only a default whose old value would
+now be wrong belongs there, never a choice someone made on purpose: schema 2 (2026-09-22) turns
+"Ignorer ce qui est déjà sauvegardé" on, because what it means changed underneath it.
+
 **Defaults are Steven's own settings** (asked 2026-09-22): Caméra au bout, separate
 counters for photos and videos, already-saved shots skipped, XML left on the card, cards
 ejected. Skipping was off at first, because Steven did not trust a record to prove a file was
