@@ -208,7 +208,7 @@ final class Ingest {
                 let camera = fromPhotos
                     ?? CameraLetters.sonyDevice(in: scan.groups)
                     ?? (scan.brand == .unknown ? nil : CameraIdentity(name: scan.brand.rawValue, serial: nil))
-                scan = CardScan(root: scan.root, groups: groups, orphans: scan.orphans, unknownCount: scan.unknownCount, brand: scan.brand, camera: camera)
+                scan = CardScan(root: scan.root, groups: groups, orphans: scan.orphans, unknown: scan.unknown, unreadableFolders: scan.unreadableFolders, brand: scan.brand, camera: camera)
                 let finished = scan
                 await MainActor.run {
                     self.update(id) { $0.state = .ready(finished) }
@@ -355,6 +355,27 @@ final class Ingest {
         return reasons
     }
 
+    /// What this backup will not cover, said before it runs rather than found
+    /// out after. None of it holds the button back: a card read in part is
+    /// still worth saving tonight, it just must not look whole afterwards.
+    var warnings: [String] {
+        var list: [String] = []
+        for card in readyCards {
+            guard let scan = card.scan, !scan.isComplete else { continue }
+            let folders = Format.count(scan.unreadableFolders.count, "dossier")
+            list.append("« \(card.name) » n'a pas pu être lue entièrement : \(folders) illisible\(scan.unreadableFolders.count > 1 ? "s" : ""). Elle ne sera pas éjectée.")
+        }
+        let unknown = readyCards.reduce(0) { $0 + ($1.scan?.unknownCount ?? 0) }
+        if unknown > 0 {
+            list.append("\(Format.count(unknown, "fichier")) d'un type que Rushes ne connaît pas \(unknown > 1 ? "restent" : "reste") sur la carte, sous « Laissés sur la carte ».")
+        }
+        return list
+    }
+
+    /// The cards this backup read whole: the others are never ejected, because
+    /// ejecting a card is the moment it gets formatted.
+    var completeCards: [Card] { readyCards.filter { $0.scan?.isComplete == true } }
+
     var canStart: Bool { blockers.isEmpty && !plan.toCopy.isEmpty && !isCopying }
 
     // MARK: Backup
@@ -418,7 +439,7 @@ final class Ingest {
         resuming = !report.succeeded
         refreshDrives()
         notify(report)
-        if report.succeeded, settings.ejectWhenDone {
+        if report.succeeded, settings.ejectWhenDone, !completeCards.isEmpty {
             Task { await ejectCards() }
         }
     }
@@ -442,7 +463,7 @@ final class Ingest {
 
     /// Ejects the cards that were backed up. Folders added by hand are left.
     func ejectCards() async {
-        let volumes = readyCards.filter(\.isVolume).map(\.url)
+        let volumes = completeCards.filter(\.isVolume).map(\.url)
         var refused: [String] = []
         for url in volumes {
             do {

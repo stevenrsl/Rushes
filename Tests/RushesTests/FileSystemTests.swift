@@ -107,6 +107,30 @@ struct FileSystemTests {
         #expect(!FileManager.default.fileExists(atPath: Copier.partialURL(for: target).path))
     }
 
+    /// Nothing is left out silently: the card is formatted on the strength of
+    /// what this list says, so a folder the Mac refused and a file of a kind
+    /// nobody listed both have to come back by name.
+    @Test("a folder the Mac will not open, and a file of an unknown kind, are named")
+    func partialReadIsNamed() throws {
+        let box = try Sandbox()
+        let card = try box.folder("CARD")
+        let now = Date()
+        try box.write("DCIM/100MSDCF/DSC00001.ARW", in: card, size: 1_000, date: now)
+        try box.write("DCIM/100MSDCF/SETTINGS.OSV", in: card, size: 10, date: now)
+        try box.write("DCIM/101MSDCF/DSC00002.ARW", in: card, size: 1_000, date: now)
+        let locked = card.appendingPathComponent("DCIM/101MSDCF")
+        #expect(chmod(locked.path, 0) == 0)
+        defer { chmod(locked.path, 0o755) }
+
+        let scan = try CardScanner.scan(card)
+
+        #expect(scan.unreadableFolders == ["DCIM/101MSDCF"])
+        #expect(!scan.isComplete)
+        #expect(scan.unknown.map(\.name) == ["SETTINGS.OSV"])
+        #expect(scan.unknown.first?.ext == "OSV")
+        #expect(scan.photoCount == 1)
+    }
+
     /// FAT32 answers that it has no `RENAME_EXCL` and then performs it anyway,
     /// so the fallback is chosen on the answer of the call, never on the name
     /// of the file system.

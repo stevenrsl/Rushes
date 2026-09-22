@@ -17,7 +17,7 @@ struct CopyingView: View {
                     Text(p.verifying ? "Vérification des copies" : "Copie depuis la carte")
                         .font(TypeScale.display)
                         .foregroundStyle(Palette.ink)
-                    Text("Le Mac ne se mettra pas en veille. Tu peux éteindre l'écran : une notification sonnera à la fin.")
+                    Text("Le Mac ne se mettra pas en veille. Laisse-le ouvert et branché : une notification sonnera à la fin.")
                         .font(TypeScale.aim)
                         .foregroundStyle(Palette.inkSoft)
                         .fixedSize(horizontal: false, vertical: true)
@@ -157,7 +157,7 @@ struct DoneView: View {
                             .buttonStyle(.accentLink)
                             .font(TypeScale.meta)
                         }
-                        if !ingest.ejected, ingest.readyCards.contains(where: \.isVolume) {
+                        if !ingest.ejected, ingest.completeCards.contains(where: \.isVolume) {
                             Button("Éjecter les cartes") {
                                 Task { await ingest.ejectCards() }
                             }
@@ -211,7 +211,15 @@ struct DoneView: View {
 
     private var sentence: String {
         if report.succeeded {
-            return "Chaque copie a été relue et correspond à la carte, octet pour octet. Tu peux aller dormir."
+            var text = "Chaque copie a été relue sur le disque et correspond à ce qui a été lu sur la carte."
+            if let warning = ingest.warnings.first {
+                // What stayed behind is said here too: this is the screen read
+                // before a card is formatted.
+                text += " " + warning
+            } else {
+                text += " Tu peux aller dormir."
+            }
+            return text
         }
         if report.cancelled {
             return "\(Format.count(report.filesCopied, "fichier")) copiés et vérifiés avant l'arrêt ; ils seront reconnus à la reprise."

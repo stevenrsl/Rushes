@@ -98,7 +98,7 @@ struct PreviewBlock: View {
     }
 
     private var leftOutCount: Int {
-        ingest.plan.leftOutCount + ingest.readyCards.reduce(0) { $0 + ($1.scan?.orphans.count ?? 0) }
+        ingest.plan.leftOutCount + ingest.readyCards.reduce(0) { $0 + ($1.scan?.orphans.count ?? 0) + ($1.scan?.unknown.count ?? 0) }
     }
 
     private var emptyText: String {
@@ -152,6 +152,11 @@ struct PreviewBlock: View {
                 for file in card.scan?.orphans ?? [] {
                     rows.append(Row(id: file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
                                     size: file.size, camera: card.cameraLabel, note: "Fichier de la carte, sans photo ni vidéo à qui appartenir"))
+                }
+                for file in card.scan?.unknown ?? [] {
+                    rows.append(Row(id: card.id + "/" + file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
+                                    size: file.size, camera: card.cameraLabel,
+                                    note: file.ext.isEmpty ? "Type de fichier inconnu de Rushes" : "« \(file.ext) » : type de fichier inconnu de Rushes"))
                 }
             }
             return rows

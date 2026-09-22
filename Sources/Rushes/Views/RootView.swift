@@ -120,6 +120,13 @@ private struct ActionBar: View {
                     .font(TypeScale.meta)
                     .foregroundStyle(allSaved ? Palette.accentInk : Palette.late)
                     .help(blockers.joined(separator: "\n"))
+            } else if let warning = ingest.warnings.first {
+                // It does not hold the button back; it is said before ⌘↩ all
+                // the same, because the card is formatted on this page's word.
+                Label(warning, systemImage: "exclamationmark.circle")
+                    .font(TypeScale.meta)
+                    .foregroundStyle(Palette.late)
+                    .help(ingest.warnings.joined(separator: "\n"))
             } else {
                 Text(detail)
                     .font(TypeScale.meta)

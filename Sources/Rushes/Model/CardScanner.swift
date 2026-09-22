@@ -54,20 +54,39 @@ enum CameraBrand: String, Sendable, CaseIterable {
     }
 }
 
+/// A file of a kind nobody listed: the camera's own databases and settings,
+/// but also the format of a body that came out last month. It is never copied,
+/// so it is named under "Laissés sur la carte" rather than passed over in
+/// silence: the card is formatted on the strength of that list.
+struct UnknownFile: Identifiable, Hashable, Sendable {
+    let relativePath: String
+    let size: Int64
+    var id: String { relativePath }
+    var name: String { (relativePath as NSString).lastPathComponent }
+    var ext: String { (relativePath as NSString).pathExtension.uppercased() }
+}
+
 /// Everything found on one card.
 struct CardScan: Sendable {
     let root: URL
     let groups: [MediaGroup]
     /// Companions with no primary beside them: never copied, always counted.
     let orphans: [MediaFile]
-    /// Files the scanner does not know: the camera's databases and settings.
-    let unknownCount: Int
+    /// Files the scanner does not know, named one by one.
+    let unknown: [UnknownFile]
+    /// Folders the Mac refused to open. The card was not read whole, so it
+    /// holds the backup back and is never ejected.
+    let unreadableFolders: [String]
     let brand: CameraBrand
     /// The body the card came from, from its photos' EXIF or Sony's clip XML;
     /// the brand alone when neither says more.
     var camera: CameraIdentity?
 
     var cameraName: String { camera?.name ?? brand.rawValue }
+    var unknownCount: Int { unknown.count }
+    /// Everything of this card is accounted for: copied, listed, or left on
+    /// purpose. Nothing was passed over in silence.
+    var isComplete: Bool { unreadableFolders.isEmpty }
 
     var photoCount: Int { groups.filter { $0.category == .photo }.count }
     var videoCount: Int { groups.filter { $0.category == .video }.count }
@@ -97,16 +116,23 @@ enum CardScanner {
     /// housekeeping folders are skipped; everything else is classified.
     static func scan(_ root: URL) throws -> CardScan {
         let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey]
+        let rootDepth = root.standardizedFileURL.pathComponents.count
+        let refused = RefusedFolders()
         guard let walker = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { url, _ in
+                // A folder the Mac will not open is remembered, not skipped in
+                // silence: a card read in part must never look backed up.
+                refused.add(Array(url.standardizedFileURL.pathComponents.dropFirst(rootDepth)).joined(separator: "/"))
+                return true
+            }
         ) else {
             throw CocoaError(.fileReadNoPermission, userInfo: [NSFilePathErrorKey: root.path])
         }
-        let rootDepth = root.standardizedFileURL.pathComponents.count
         var files: [MediaFile] = []
-        var unknown = 0
+        var unknown: [UnknownFile] = []
         var extensions: Set<String> = []
 
         for case let url as URL in walker {
@@ -121,7 +147,10 @@ enum CardScanner {
             guard values?.isRegularFile == true else { continue }
             let folders = Array(components.dropLast())
             guard let role = MediaTypes.role(forExtension: url.pathExtension, folders: folders) else {
-                unknown += 1
+                unknown.append(UnknownFile(
+                    relativePath: components.joined(separator: "/"),
+                    size: Int64(values?.fileSize ?? 0)
+                ))
                 continue
             }
             extensions.insert(url.pathExtension.lowercased())
@@ -144,9 +173,18 @@ enum CardScanner {
             root: root,
             groups: groups,
             orphans: orphans,
-            unknownCount: unknown,
+            unknown: unknown,
+            unreadableFolders: refused.all,
             brand: CameraBrand.detect(dcimFolders: dcim, topFolders: names, extensions: extensions),
             camera: nil
         )
     }
+}
+
+/// The folders the walker was refused, gathered from its own thread.
+private final class RefusedFolders: @unchecked Sendable {
+    private let lock = NSLock()
+    private var names: [String] = []
+    func add(_ name: String) { lock.withLock { if !names.contains(name) { names.append(name) } } }
+    var all: [String] { lock.withLock { names } }
 }
