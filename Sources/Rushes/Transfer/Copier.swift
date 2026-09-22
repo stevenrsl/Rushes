@@ -9,10 +9,10 @@ import Foundation
 /// cache (`F_NOCACHE`): a check that reads back what is still in memory proves
 /// nothing about the drive.
 ///
-/// A copy is written under a hidden name beside its final one and renamed only
-/// once it matches, with `RENAME_EXCL`: a file that exists is never replaced,
-/// and a copy cut off by a pulled cable never looks finished. The card is only
-/// ever read.
+/// A copy is written under a hidden name beside its final one and named only
+/// once it matches, and only if that name is free (see `name(_:_:)`): a file
+/// that exists is never replaced, and a copy cut off by a pulled cable never
+/// looks finished. The card is only ever read.
 enum Copier {
     static let chunkSize = 8 << 20
 
@@ -53,7 +53,7 @@ enum Copier {
         }
 
         let input = open(source.path, O_RDONLY)
-        guard input >= 0 else { throw posix("Lecture impossible de « \(source.lastPathComponent) »") }
+        guard input >= 0 else { throw posix(errno, "Lecture impossible de « \(source.lastPathComponent) »", at: source) }
         defer { close(input) }
         _ = fcntl(input, F_NOCACHE, 1)
 
@@ -62,15 +62,15 @@ enum Copier {
         for partial in partials {
             unlink(partial.path) // A leftover from a backup that was cut off.
             let fd = open(partial.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
-            guard fd >= 0 else { throw posix("Écriture impossible sur \(volumeName(of: partial))") }
+            guard fd >= 0 else { throw posix(errno, "Écriture impossible sur \(volumeName(of: partial))") }
             _ = fcntl(fd, F_NOCACHE, 1)
             outputs.append(fd)
         }
 
-        let hash = try stream(from: input, to: outputs, targets: targets, isCancelled: isCancelled) { advance($0, false) }
+        let hash = try stream(from: input, to: outputs, source: source, targets: targets, isCancelled: isCancelled) { advance($0, false) }
 
         for (fd, partial) in zip(outputs, partials) {
-            guard fsync(fd) == 0 else { throw posix("Écriture incomplète sur \(volumeName(of: partial))") }
+            guard fsync(fd) == 0 else { throw posix(errno, "Écriture incomplète sur \(volumeName(of: partial))") }
         }
         for fd in outputs { close(fd) }
         outputs.removeAll()
@@ -84,15 +84,43 @@ enum Copier {
 
         for (partial, target) in zip(partials, targets) {
             try? FileManager.default.setAttributes([.modificationDate: modified, .creationDate: created], ofItemAtPath: partial.path)
-            guard renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 else {
-                if errno == EEXIST {
-                    throw Failure(message: "« \(target.lastPathComponent) » est apparu sur \(volumeName(of: target)) pendant la copie. Rien n'a été remplacé.")
-                }
-                throw posix("Impossible de nommer « \(target.lastPathComponent) »")
-            }
+            try name(partial, target)
         }
         succeeded = true
         return hex(hash)
+    }
+
+    /// Gives a checked copy its final name without ever replacing a file.
+    ///
+    /// `renamex_np(RENAME_EXCL)` does it in one atomic step, but only on a file
+    /// system that supports it: exFAT and FAT32, the format the drives of a
+    /// shoot are sold in, answer `ENOTSUP` and would leave every copy nameless.
+    /// There, the name is reserved first with an exclusive create, which is
+    /// atomic too, and the copy is renamed over that reservation of ours. Cut
+    /// off in between, it leaves an empty file, which the planner reads as a
+    /// name already taken: a conflict, never a file that looks finished.
+    private static func name(_ partial: URL, _ target: URL) throws {
+        if renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 { return }
+        let code = errno
+        if code == EEXIST { throw appeared(target) }
+        guard code == ENOTSUP else { throw posix(code, "Impossible de nommer « \(target.lastPathComponent) »") }
+
+        let reserved = open(target.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+        guard reserved >= 0 else {
+            let code = errno
+            if code == EEXIST { throw appeared(target) }
+            throw posix(code, "Impossible de nommer « \(target.lastPathComponent) »")
+        }
+        close(reserved)
+        guard rename(partial.path, target.path) == 0 else {
+            let code = errno
+            unlink(target.path)
+            throw posix(code, "Impossible de nommer « \(target.lastPathComponent) »")
+        }
+    }
+
+    private static func appeared(_ target: URL) -> Failure {
+        Failure(message: "« \(target.lastPathComponent) » est apparu sur \(volumeName(of: target)) pendant la copie. Rien n'a été remplacé.")
     }
 
     /// Reads the card and writes every drive, the next chunk read while the
@@ -100,6 +128,7 @@ enum Copier {
     private static func stream(
         from input: Int32,
         to outputs: [Int32],
+        source: URL,
         targets: [URL],
         isCancelled: () -> Bool,
         advance: (Int64) -> Void
@@ -114,7 +143,7 @@ enum Copier {
         var hasher = XXHash64()
         var current = front
         var next = back
-        var count = try readFully(input, into: current)
+        var count = try readFully(input, into: current, from: source)
         let queue = DispatchQueue.global(qos: .userInitiated)
         let errors = ErrorBox()
 
@@ -125,12 +154,12 @@ enum Copier {
             for (fd, target) in zip(outputs, targets) {
                 queue.async(group: group) {
                     if !writeFully(fd, chunk) {
-                        errors.set(posix("Écriture impossible sur \(volumeName(of: target))", alwaysFatal: true))
+                        errors.set(posix(errno, "Écriture impossible sur \(volumeName(of: target))", alwaysFatal: true))
                     }
                 }
             }
             hasher.update(chunk)
-            let nextCount = Result { try readFully(input, into: next) }
+            let nextCount = Result { try readFully(input, into: next, from: source) }
             group.wait()
             if let error = errors.value { throw error }
             advance(Int64(count))
@@ -143,7 +172,7 @@ enum Copier {
     /// Reads a copy back from the drive, around its cache, and hashes it.
     private static func readHash(of url: URL, isCancelled: () -> Bool, advance: (Int64) -> Void) throws -> UInt64 {
         let fd = open(url.path, O_RDONLY)
-        guard fd >= 0 else { throw posix("Relecture impossible sur \(volumeName(of: url))") }
+        guard fd >= 0 else { throw posix(errno, "Relecture impossible sur \(volumeName(of: url))", at: url) }
         defer { close(fd) }
         _ = fcntl(fd, F_NOCACHE, 1)
         let buffer = UnsafeMutableRawPointer.allocate(byteCount: chunkSize, alignment: 16384)
@@ -151,7 +180,7 @@ enum Copier {
         var hasher = XXHash64()
         while true {
             if isCancelled() { throw CancellationError() }
-            let count = try readFully(fd, into: buffer)
+            let count = try readFully(fd, into: buffer, from: url)
             if count == 0 { break }
             hasher.update(UnsafeRawBufferPointer(start: buffer, count: count))
             advance(Int64(count))
@@ -164,14 +193,14 @@ enum Copier {
         hex(try readHash(of: url, isCancelled: { false }, advance: { _ in }))
     }
 
-    private static func readFully(_ fd: Int32, into buffer: UnsafeMutableRawPointer) throws -> Int {
+    private static func readFully(_ fd: Int32, into buffer: UnsafeMutableRawPointer, from url: URL) throws -> Int {
         var filled = 0
         while filled < chunkSize {
             let n = read(fd, buffer + filled, chunkSize - filled)
             if n == 0 { break }
             if n < 0 {
                 if errno == EINTR { continue }
-                throw posix("La lecture s’est interrompue", alwaysFatal: true)
+                throw posix(errno, "La lecture de « \(url.lastPathComponent) » s’est interrompue", at: url)
             }
             filled += n
         }
@@ -197,14 +226,21 @@ enum Copier {
         (try? url.resourceValues(forKeys: [.volumeNameKey]).volumeName) ?? url.deletingLastPathComponent().lastPathComponent
     }
 
-    /// A failure from the last system call. A full disk, a card or a drive
-    /// that is gone stops the whole backup; anything else, this file only.
-    private static func posix(_ message: String, alwaysFatal: Bool = false) -> Failure {
-        let code = errno
+    /// A failure from a system call, whose `errno` the caller reads first: the
+    /// message itself asks the file system for a volume name, which would
+    /// overwrite it and report a full disk as "No such file or directory".
+    ///
+    /// A full disk, a card or a drive that is gone stops the whole backup. A
+    /// bad sector (`EIO`) costs this file only, as long as the card is still
+    /// there: one unreadable shot must not cost the two other cards.
+    private static func posix(_ code: Int32, _ message: String, at url: URL? = nil, alwaysFatal: Bool = false) -> Failure {
         if code == ENOSPC {
             return Failure(message: message + " : le disque est plein.", fatal: true)
         }
-        let gone = [ENXIO, EIO, ENODEV, ENOENT].contains(code)
+        var gone = [ENXIO, EIO, ENODEV, ENOENT].contains(code)
+        // The card answers for itself: its folder still readable means the
+        // reader is there and this one file is the one at fault.
+        if gone, let url { gone = access(url.deletingLastPathComponent().path, R_OK) != 0 }
         return Failure(message: "\(message) (\(String(cString: strerror(code)))).", fatal: alwaysFatal || gone)
     }
 }
