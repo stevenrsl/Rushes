@@ -227,11 +227,12 @@ margin over the bytes to copy. What it cannot hold back it says anyway, in the s
 ## At night
 
 The backup holds a `ProcessInfo` activity: the Mac does not idle-sleep (the screen may). A
-notification with sound says when it is done ("Tu peux aller dormir"); verified cards are
-ejected. Quitting mid-backup asks. What was checked before a cancel or a failure is in the
-manifest, so "Reprendre" copies only the rest: after a cut-off or failed backup the plan skips
-what every drive has, even with "Ignorer ce qui est déjà sauvegardé" off (`Ingest.resuming`). A
-card left unticked does not hold the button while it is read. Appearance can be forced dark in Settings
+notification with sound says when it is done ("Tu peux aller dormir"); cards read whole and
+verified are ejected, the others never. Quitting mid-backup asks, then stops the copy and waits
+for the record to be written. What was verified before a cancel, a failure, a quit or a crash is
+in the journal, so "Reprendre" copies only the rest, even with "Ignorer ce qui est déjà
+sauvegardé" off and even after the app was killed. A card left unticked does not hold the button
+while it is read. Appearance can be forced dark in Settings
 (Copie tab).
 
 The first launch asks for removable volumes access (`NSRemovableVolumesUsageDescription`); the
