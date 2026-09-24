@@ -16,7 +16,8 @@ struct ShootBlock: View {
                         // field is the one thing nobody checks at 3 a.m.
                         TextField("Par exemple, SR", text: $ingest.settings.initials)
                     }
-                    .frame(width: 110)
+                    // Wide enough for its placeholder: at 110 it read "Par exemple, S".
+                    .frame(width: 150)
                 }
                 GridRow {
                     Field(label: "Client") {
@@ -212,6 +213,9 @@ private struct DriveRow: View {
 /// How files are named, with the name they will get in front of you.
 struct NamingBlock: View {
     @Environment(Ingest.self) private var ingest
+    /// The preset the pattern was last equal to: what "Revenir à" goes back to
+    /// once the pattern has been edited by hand.
+    @State private var basePreset = NamePreset.cameraLast
 
     var body: some View {
         @Bindable var ingest = ingest
@@ -225,12 +229,22 @@ struct NamingBlock: View {
                 Chip(text: "Personnalisé", selected: preset == nil) {}
                     .allowsHitTesting(false)
             }
+            .onChange(of: ingest.settings.namePattern, initial: true) { _, pattern in
+                if let matched = NamePreset.matching(pattern) { basePreset = matched }
+            }
 
             Field(label: "Modèle", help: preset?.detail ?? "Modèle personnalisé : les jetons entre accolades sont remplacés, le reste est gardé tel quel.", monospaced: true) {
                 TextField("{YYMMDD}_{INIT}_{CLIENT}_{PROJET}_{NUM}", text: $ingest.settings.namePattern)
             }
 
             Flow(spacing: 14) {
+                // A pattern gone wrong is undone in one click, not erased by hand.
+                if preset == nil {
+                    Button("Revenir à « \(basePreset.title) »") { ingest.settings.namePattern = basePreset.pattern }
+                        .buttonStyle(.accentLink)
+                        .font(TypeScale.meta.weight(.medium))
+                        .help(basePreset.pattern)
+                }
                 ForEach(NameToken.allCases, id: \.self) { token in
                     Button("+ " + token.label) {
                         let pattern = ingest.settings.namePattern
