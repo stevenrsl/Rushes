@@ -119,4 +119,24 @@ struct VerdictTests {
         #expect(verdict.level == .hold)
         #expect(verdict.sentence.contains("interrompue"))
     }
+
+    /// The folder entries holding tonight's names may still be in the Mac's
+    /// cache. A drive that will not say they are written down cannot vouch
+    /// for anything copied onto it tonight.
+    @Test("a drive that will not confirm its writes holds the cards")
+    func unconfirmedDrive() throws {
+        let box = try Sandbox()
+        let (url, scan) = try card(box)
+        let drive = try box.folder("SSD")
+        let plan = plan(url, scan, drive, settings())
+        var report = Backup.run(plan, drives: [drive], isCancelled: { false }) { _ in }
+        #expect(report.unflushed.isEmpty)
+        #expect(report.succeeded)
+        report.unflushed = ["SSD"]
+
+        let verdict = Verdicts.of(cardID: url.path, cardName: "CARD", scan: scan, plan: plan, report: report)
+        #expect(!report.succeeded)
+        #expect(verdict.level == .hold)
+        #expect(verdict.sentence.contains("« SSD »"))
+    }
 }

@@ -35,8 +35,11 @@ struct BackupReport: Sendable {
     var finished = Date()
     /// The shoot folders written, on the first drive, for "Afficher dans le Finder".
     var folders: [URL] = []
+    /// Drives that would not confirm that what they were given is written
+    /// down. Nothing copied tonight can be counted on there yet.
+    var unflushed: [String] = []
 
-    var succeeded: Bool { failures.isEmpty && !cancelled && stopped == nil }
+    var succeeded: Bool { failures.isEmpty && !cancelled && stopped == nil && unflushed.isEmpty }
 }
 
 enum Backup {
@@ -179,7 +182,9 @@ enum Backup {
         // Before anyone is told a card can be formatted, the drives are asked
         // to put what they are holding onto the platters. fsync alone leaves
         // it in the drive's own cache, which a pulled cable empties.
-        for drive in drives { Journal.flushDevice(on: drive) }
+        for drive in drives where report.filesCopied > 0 && !Journal.flushDevice(on: drive) {
+            report.unflushed.append(drive.lastPathComponent)
+        }
 
         if let drive = drives.first {
             report.folders = plan.shootFolders.map { $0.isEmpty ? drive : drive.appendingPathComponent($0) }

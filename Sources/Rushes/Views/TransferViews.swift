@@ -231,6 +231,9 @@ struct DoneView: View {
         if report.cancelled {
             return "\(Format.count(report.filesCopied, "fichier")) copiés et vérifiés avant l'arrêt ; ils seront reconnus à la reprise."
         }
+        if report.failures.isEmpty, report.stopped == nil, !report.unflushed.isEmpty {
+            return "Tout a été copié et relu, mais \(report.unflushed.map { "« \($0) »" }.joined(separator: ", ")) n'a pas confirmé l'avoir écrit jusqu'au bout. Ne formate pas ces cartes ce soir."
+        }
         return "Ce qui a été copié est vérifié. Le reste est listé ci-dessous, rien n'a été remplacé."
     }
 }

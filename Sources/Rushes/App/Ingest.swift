@@ -541,7 +541,10 @@ final class Ingest {
             content.body = "\(Format.count(report.filesCopied, "fichier")) copiés et vérifiés avant l'arrêt."
         } else {
             content.title = "Sauvegarde incomplète"
-            content.body = report.stopped ?? "\(Format.count(report.failures.count, "fichier")) n'ont pas pu être copiés."
+            content.body = report.stopped
+                ?? (report.failures.isEmpty
+                    ? "Un disque n'a pas confirmé avoir tout écrit. Ne formate pas les cartes ce soir."
+                    : "\(Format.count(report.failures.count, "fichier")) n'\(report.failures.count > 1 ? "ont" : "a") pas pu être copié\(report.failures.count > 1 ? "s" : "").")
         }
         content.sound = .default
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))

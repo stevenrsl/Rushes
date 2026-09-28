@@ -88,14 +88,23 @@ enum Journal {
         guard fsync(fd) == 0 else { throw JournalError(path: url.path) }
     }
 
-    /// Asks the drive to write what it still holds in its own cache all the
-    /// way down. `fsync` only hands the bytes to the drive; `F_FULLFSYNC` is
-    /// what makes them survive the cable coming out a second later.
-    static func flushDevice(on drive: URL) {
+    /// Asks the drive to write everything down, and says whether it did.
+    ///
+    /// `fsync` only hands a file's bytes to the drive, and each copy was given
+    /// its name after that: on exFAT the folder entries holding the names can
+    /// sit in the Mac's cache for half a minute. Pulled out then, the drive
+    /// keeps a hidden partial and no name, and the next backup sweeps it away,
+    /// maybe after the card was formatted. So the whole volume is synced,
+    /// then the drive told to empty its own cache (`F_FULLFSYNC`), before a
+    /// single card hears that it may be formatted.
+    static func flushDevice(on drive: URL) -> Bool {
+        if sync_volume_np(drive.path, SYNC_VOLUME_FULLSYNC | SYNC_VOLUME_WAIT) == 0 { return true }
+        // A volume that does not take it (a network share) still gets the
+        // drive's cache emptied through a file of ours.
         let fd = open(url(on: drive).path, O_RDONLY)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else { return false }
         defer { close(fd) }
-        _ = fcntl(fd, F_FULLFSYNC)
+        return fcntl(fd, F_FULLFSYNC) != -1
     }
 
     /// Every line the drive holds. A line that will not decode is skipped: the

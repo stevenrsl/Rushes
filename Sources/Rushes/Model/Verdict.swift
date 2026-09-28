@@ -82,6 +82,12 @@ enum Verdicts {
                 : "La sauvegarde s'est arrêtée avant la fin de cette carte.")
         }
 
+        if !report.unflushed.isEmpty, mine.contains(where: { $0.status == .new }) {
+            level = .hold
+            let names = report.unflushed.map { "« \($0) »" }.joined(separator: ", ")
+            reasons.append("\(names) n'a pas confirmé avoir tout écrit : ce qui vient d'y être copié n'est pas encore sûr.")
+        }
+
         if !scan.isComplete {
             level = .hold
             let folders = Format.count(scan.unreadableFolders.count, "dossier")
