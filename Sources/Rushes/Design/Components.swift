@@ -446,6 +446,8 @@ struct Bar: View {
         }
         .frame(height: height)
         .animation(.easeOut(duration: 0.3), value: fraction)
+        // Drawn beside a figure that says the same thing in words.
+        .accessibilityHidden(true)
     }
 }
 

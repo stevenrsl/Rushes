@@ -399,6 +399,10 @@ final class Ingest {
     /// What each card was told at the end of the last backup: the page's last
     /// word, and the one the camera acts on.
     private(set) var verdicts: [CardVerdict] = []
+    /// The plan being run, kept apart from the one on screen: a setting
+    /// changed while copying makes a new plan, and a card's verdict must be
+    /// judged on what was actually asked of the drives, not on that one.
+    private var runningPlan = IngestPlan()
 
     /// The cards nothing was left behind on. A card told "ne pas formater" is
     /// never ejected: ejecting it is the moment it goes back in the camera.
@@ -427,6 +431,7 @@ final class Ingest {
         settings.recentClients = IngestSettings.remembering(settings.client, in: settings.recentClients)
         settings.recentProjects = IngestSettings.remembering(settings.project, in: settings.recentProjects)
         let plan = plan
+        runningPlan = plan
         cancelFlag.reset()
         verdicts = []
         phase = .copying
@@ -488,7 +493,7 @@ final class Ingest {
         activity = nil
         verdicts = readyCards.compactMap { card in
             guard let scan = card.scan else { return nil }
-            return Verdicts.of(cardID: card.id, cardName: card.name, scan: scan, plan: plan, report: report)
+            return Verdicts.of(cardID: card.id, cardName: card.name, scan: scan, plan: runningPlan, report: report)
         }
         if let onQuit {
             self.onQuit = nil
