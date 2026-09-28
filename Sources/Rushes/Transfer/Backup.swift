@@ -171,14 +171,15 @@ enum Backup {
                 }
             }
         }
-        // The closing line comes last, and only if nothing was left undone:
-        // until it is there, this backup counts as unfinished, and the next
-        // plan skips what it verified whatever the setting says. That is what
-        // "Reprendre" used to keep in memory, and lost when the app quit.
-        if report.succeeded {
-            let end = JournalLine(kind: .end, backup: id, at: now)
-            for drive in drives { try? Journal.append([end], on: drive) }
-        }
+        // The closing line comes last and says whether anything was left
+        // undone. Until a complete one is written, this drive counts as having
+        // a backup to resume, and the next plan skips what was verified
+        // whatever the setting says. That is what "Reprendre" used to keep in
+        // memory, and lost when the app quit. A crash writes no line at all,
+        // which reads the same.
+        let complete = report.failures.isEmpty && !report.cancelled && report.stopped == nil
+        let end = JournalLine(kind: .end, backup: id, at: now, complete: complete)
+        for drive in drives { try? Journal.append([end], on: drive) }
         // Before anyone is told a card can be formatted, the drives are asked
         // to put what they are holding onto the platters. fsync alone leaves
         // it in the drive's own cache, which a pulled cable empties.

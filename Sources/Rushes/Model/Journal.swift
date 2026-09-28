@@ -48,6 +48,10 @@ struct JournalLine: Codable, Sendable {
     /// On `start` lines, so a folder can still be explained months later.
     var version: String?
     var pattern: String?
+    /// On `end` lines: whether everything planned was copied and verified.
+    /// Before 2026-09-28 an `end` was written only then, so a line without it
+    /// is a complete one.
+    var complete: Bool?
 }
 
 enum Journal {
@@ -156,8 +160,11 @@ struct DriveJournal: Sendable {
         var stem: String
         var category: String?
     }
-    /// A backup was started here and never ended: what it did verify is known
-    /// good, and is skipped even when the setting copies saved shots again.
+    /// A backup here was cut off or left something undone, and no backup has
+    /// finished whole since: what it did verify is known good, and is skipped
+    /// even when the setting copies saved shots again. The next complete
+    /// backup, which is "Reprendre", closes the matter; one failed file no
+    /// longer overrides the setting for the rest of the drive's life.
     var interrupted = false
 
     /// A plan is made again at every keystroke, and a year of shooting is a
@@ -173,12 +180,19 @@ struct DriveJournal: Sendable {
     private static func read(_ drive: URL) -> DriveJournal {
         var journal = DriveJournal()
         var open: Set<String> = []
+        var unfinished = false
         for line in Journal.read(on: drive) {
             switch line.kind {
             case .start:
                 open.insert(line.backup)
             case .end:
                 open.remove(line.backup)
+                if line.complete == false {
+                    unfinished = true
+                } else {
+                    unfinished = false
+                    open.removeAll()
+                }
             case .file:
                 guard let path = line.path, let fingerprint = line.fingerprint else { continue }
                 journal.saved[fingerprint] = Saved(path: path, size: line.size ?? 0)
@@ -186,7 +200,7 @@ struct DriveJournal: Sendable {
                 journal.namesGiven[line.shoot ?? "", default: []].append(Name(stem: stem, category: line.category))
             }
         }
-        journal.interrupted = !open.isEmpty
+        journal.interrupted = unfinished || !open.isEmpty
         return journal
     }
 
