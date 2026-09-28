@@ -290,6 +290,10 @@ final class Ingest {
     // MARK: Plan
 
     func schedulePlan() {
+        // The plan running is the one that counts until it ends; `reset`
+        // makes the next one. Remembering tonight's client at ⌘↩ used to
+        // replan 150 ms into the copy.
+        guard !isCopying else { return }
         isPlanning = true
         planTask?.cancel()
         planGeneration += 1
@@ -408,6 +412,14 @@ final class Ingest {
     /// judged on what was actually asked of the drives, not on that one.
     private var runningPlan = IngestPlan()
 
+    /// The drives the last backup wrote to, by name, even if one has since
+    /// been unplugged.
+    var backupDriveNames: [String] {
+        runningPlan.drives.map { path in
+            drives.first { $0.url.path == path }?.name ?? URL(fileURLWithPath: path).lastPathComponent
+        }
+    }
+
     /// The cards nothing was left behind on. A card told "ne pas formater" is
     /// never ejected: ejecting it is the moment it goes back in the camera.
     var ejectableCards: [Card] {
@@ -516,7 +528,7 @@ final class Ingest {
         let content = UNMutableNotificationContent()
         if report.succeeded {
             content.title = "Sauvegarde vérifiée"
-            var body = "\(Format.count(report.filesCopied, "fichier")) · \(Format.bytes(report.bytesCopied)) sur \(Format.count(onlineDrives.count, "disque"))."
+            var body = "\(Format.count(report.filesCopied, "fichier")) · \(Format.bytes(report.bytesCopied)) sur \(Format.count(runningPlan.drives.count, "disque"))."
             // The last word is about the cards, because that is what gets
             // formatted in the morning.
             let held = verdicts.filter { $0.level != .safe }

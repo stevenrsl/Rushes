@@ -110,7 +110,7 @@ struct DoneView: View {
                         Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
                             fact("Fichiers", Format.number(report.filesCopied))
                             fact("Volume", Format.bytes(report.bytesCopied))
-                            fact("Disques", ingest.onlineDrives.map(\.name).joined(separator: ", "))
+                            fact("Disques", ingest.backupDriveNames.joined(separator: ", "))
                             fact("Durée", Format.duration(report.finished.timeIntervalSince(report.started)))
                             if let message = ingest.ejectMessage {
                                 fact("Cartes", message)
