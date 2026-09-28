@@ -95,6 +95,15 @@ enum Verdicts {
             reasons.append("\(Format.count(scan.unknown.count, "fichier")) d'un type que Rushes ne connaît pas\(named) \(scan.unknown.count > 1 ? "restent" : "reste") sur la carte : \(scan.unknown.count > 1 ? "copie-les" : "copie-le") à la main avant de formater.")
         }
 
+        if !scan.setAside.isEmpty {
+            if level == .safe { level = .check }
+            let n = scan.setAside.count
+            let s = n > 1 ? "s" : ""
+            let folders = Set(scan.setAside.compactMap(\.hiddenBy).filter { !$0.isEmpty }).sorted()
+            let named = folders.isEmpty ? "" : " (\(folders.prefix(3).joined(separator: ", ")))"
+            reasons.append("\(Format.count(n, "photo ou vidéo", "photos ou vidéos")) cachée\(s) par l'appareil ou rangée\(s) dans un dossier que Rushes ne copie pas\(named) \(n > 1 ? "restent" : "reste") sur la carte : \(n > 1 ? "copie-les" : "copie-la") à la main avant de formater.")
+        }
+
         if !plan.conflicts.isEmpty, mine.contains(where: { if case .conflict = $0.status { true } else { false } }) {
             level = .hold
             reasons.append("Des noms de cette carte étaient déjà pris : ces prises n'ont pas été copiées.")

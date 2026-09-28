@@ -206,7 +206,7 @@ final class Ingest {
                 let camera = fromPhotos
                     ?? CameraLetters.sonyDevice(in: scan.groups)
                     ?? (scan.brand == .unknown ? nil : CameraIdentity(name: scan.brand.rawValue, serial: nil))
-                scan = CardScan(root: scan.root, groups: groups, orphans: scan.orphans, unknown: scan.unknown, unreadableFolders: scan.unreadableFolders, brand: scan.brand, camera: camera)
+                scan = CardScan(root: scan.root, groups: groups, orphans: scan.orphans, unknown: scan.unknown, unreadableFolders: scan.unreadableFolders, brand: scan.brand, camera: camera, setAside: scan.setAside)
                 let finished = scan
                 await MainActor.run {
                     self.update(id) { $0.state = .ready(finished) }
@@ -392,6 +392,10 @@ final class Ingest {
         let unknown = readyCards.reduce(0) { $0 + ($1.scan?.unknownCount ?? 0) }
         if unknown > 0 {
             list.append("\(Format.count(unknown, "fichier")) d'un type que Rushes ne connaît pas \(unknown > 1 ? "restent" : "reste") sur la carte, sous « Laissés sur la carte ».")
+        }
+        let aside = readyCards.reduce(0) { $0 + ($1.scan?.setAside.count ?? 0) }
+        if aside > 0 {
+            list.append("\(Format.count(aside, "photo ou vidéo", "photos ou vidéos")) \(aside > 1 ? "sont cachées ou rangées" : "est cachée ou rangée") là où l'appareil range ses propres fichiers. Rushes ne \(aside > 1 ? "les" : "la") copie pas, et \(aside > 1 ? "les" : "la") nomme sous « Laissés sur la carte ».")
         }
         return list
     }
