@@ -318,12 +318,13 @@ final class Ingest {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             let plan = {
-                var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives)
+                var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives, isCancelled: { Task.isCancelled })
                 plan.drives = drives.map(\.path)
                 plan.generation = generation
                 plan.namePattern = settings.namePattern
                 return plan
             }()
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard generation == self.planGeneration else { return }
                 self.plan = plan

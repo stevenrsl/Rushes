@@ -153,7 +153,8 @@ enum Planner {
         fixedDay: ShootDay?,
         drives: [URL],
         index: (URL, String) -> DestinationIndex = DestinationIndex.load,
-        journal: (URL) -> DriveJournal = DriveJournal.load
+        journal: (URL) -> DriveJournal = DriveJournal.load,
+        isCancelled: () -> Bool = { false }
     ) -> IngestPlan {
         let template = NameTemplate(settings.namePattern)
         let folderTemplate = NameTemplate(settings.folderPattern)
@@ -199,6 +200,9 @@ enum Planner {
         var folders: [String] = []
 
         for (source, group) in items {
+            // A newer keystroke has made this plan useless; each shot costs a
+            // walk of the drives' folders and a stat per file.
+            if isCancelled() { break }
             let day = fixedDay ?? ShootDay(date: group.captureDate, cutoffHour: settings.dayCutoffHour)
             var values = NameValues(
                 day: day,
