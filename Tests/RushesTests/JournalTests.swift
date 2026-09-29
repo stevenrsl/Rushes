@@ -73,6 +73,19 @@ struct JournalTests {
         #expect(next.toCopy.isEmpty)
     }
 
+    @Test("a backup that went well ends complete, and its records share one time")
+    func completeEnd() throws {
+        let box = try Sandbox()
+        let night = try firstNight(box)
+        #expect(Journal.read(on: night.drive).last?.kind == .end)
+        #expect(Journal.read(on: night.drive).last?.complete == true)
+        #expect(!DriveJournal.load(night.drive).interrupted)
+        let records = night.drive.appendingPathComponent("260921_Kaffi_Lexus/_RUSHES")
+        let stem = History.stamp(night.report.recorded)
+        #expect(FileManager.default.fileExists(atPath: records.appendingPathComponent(stem + ".json").path))
+        #expect(TransferReport.fileName(night.report.recorded) == "rapport-\(stem).html")
+    }
+
     @Test("a backup that failed is resumed, and the setting comes back once one finishes")
     func failedBackupIsResumedOnce() throws {
         let box = try Sandbox()

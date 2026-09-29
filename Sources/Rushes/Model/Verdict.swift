@@ -82,7 +82,9 @@ enum Verdicts {
                 : "La sauvegarde s'est arrêtée avant la fin de cette carte.")
         }
 
-        if !report.unflushed.isEmpty, mine.contains(where: { $0.status == .new }) {
+        // Every card, not only those copied tonight: a shot counted as saved
+        // may have been named by a run cut off before its drives were synced.
+        if !report.unflushed.isEmpty, !mine.isEmpty {
             level = .hold
             let names = report.unflushed.map { "« \($0) »" }.joined(separator: ", ")
             reasons.append("\(names) n'a pas confirmé avoir tout écrit : ce qui vient d'y être copié n'est pas encore sûr.")

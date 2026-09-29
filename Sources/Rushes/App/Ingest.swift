@@ -415,13 +415,14 @@ final class Ingest {
         // The plan's own drives, not today's: the two are equal here, and this
         // is the pair that was counted, named and checked against.
         let drives = plan.drives.map { URL(fileURLWithPath: $0) }
-        settings.recentClients = IngestSettings.remembering(settings.client, in: settings.recentClients)
-        settings.recentProjects = IngestSettings.remembering(settings.project, in: settings.recentProjects)
         let plan = plan
         runningPlan = plan
         cancelFlag.reset()
         verdicts = []
         phase = .copying
+        // Remembered once copying, when a change of settings makes no plan.
+        settings.recentClients = IngestSettings.remembering(settings.client, in: settings.recentClients)
+        settings.recentProjects = IngestSettings.remembering(settings.project, in: settings.recentProjects)
         progress = BackupProgress()
         speed = 0
         doneRate = 0
@@ -459,7 +460,7 @@ final class Ingest {
 
     private func advance(_ state: BackupProgress) {
         guard isCopying else { return }
-        if state.done != progress.done || state.filesDone != progress.filesDone { lastMoved = .now }
+        if state.quiet || state.done != progress.done || state.filesDone != progress.filesDone { lastMoved = .now }
         progress = state
         let now = Date()
         if let last = lastSample {
@@ -514,7 +515,7 @@ final class Ingest {
                 level: verdict.level == .safe ? "safe" : verdict.level == .check ? "check" : "hold"
             )
         }
-        let file = TransferReport.fileName(report.finished)
+        let file = TransferReport.fileName(report.recorded)
         for path in runningPlan.drives {
             let drive = URL(fileURLWithPath: path)
             for (folder, entries) in report.entries.sorted(by: { $0.key < $1.key }) {
@@ -525,7 +526,8 @@ final class Ingest {
                 let url = (folder.isEmpty ? drive : drive.appendingPathComponent(folder))
                     .appendingPathComponent(History.folderName)
                     .appendingPathComponent(file)
-                if (try? Data(html.utf8).write(to: url, options: .atomic)) != nil { reportURLs.append(url) }
+                // Never over a file, even one of ours: nothing on a drive is replaced.
+                if (try? Data(html.utf8).write(to: url, options: .withoutOverwriting)) != nil { reportURLs.append(url) }
             }
         }
     }
