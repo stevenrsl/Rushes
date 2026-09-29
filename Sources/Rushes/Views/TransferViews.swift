@@ -178,6 +178,14 @@ struct DoneView: View {
                             .buttonStyle(.accentLink)
                             .font(TypeScale.meta)
                         }
+                        if let first = ingest.reportURLs.first {
+                            Button("Ouvrir le rapport") {
+                                NSWorkspace.shared.open(first)
+                            }
+                            .buttonStyle(.accentLink)
+                            .font(TypeScale.meta)
+                            .help("Une page à garder ou à envoyer, dans _RUSHES à côté du relevé")
+                        }
                         if !ingest.ejected, ingest.ejectableCards.contains(where: \.isVolume) {
                             Button("Éjecter les cartes") {
                                 Task { await ingest.ejectCards() }

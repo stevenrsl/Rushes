@@ -524,6 +524,7 @@ final class Ingest {
             guard let scan = card.scan else { return nil }
             return Verdicts.of(cardID: card.id, cardName: card.name, scan: scan, plan: runningPlan, report: report)
         }
+        writeReports(report)
         if let onQuit {
             self.onQuit = nil
             onQuit()
@@ -535,6 +536,37 @@ final class Ingest {
         notify(report)
         if report.succeeded, settings.ejectWhenDone, !ejectableCards.isEmpty {
             Task { await ejectCards() }
+        }
+    }
+
+    /// The readable reports of the last backup, first drive first.
+    private(set) var reportURLs: [URL] = []
+
+    /// Writes the page a person reads beside each shoot's manifest, on every
+    /// drive, once the cards have been told. A report that cannot be written
+    /// costs nothing but itself: the JSON and the CSV are already there.
+    private func writeReports(_ report: BackupReport) {
+        reportURLs = []
+        let names = backupDriveNames
+        let cards = verdicts.map { verdict in
+            TransferReport.Card(
+                name: verdict.cardName, title: verdict.title, sentence: verdict.sentence,
+                level: verdict.level == .safe ? "safe" : verdict.level == .check ? "check" : "hold"
+            )
+        }
+        let file = TransferReport.fileName(report.finished)
+        for path in runningPlan.drives {
+            let drive = URL(fileURLWithPath: path)
+            for (folder, entries) in report.entries.sorted(by: { $0.key < $1.key }) {
+                let html = TransferReport.html(
+                    shoot: folder, report: report, entries: entries, cards: cards,
+                    drives: names, version: Bundle.main.version
+                )
+                let url = (folder.isEmpty ? drive : drive.appendingPathComponent(folder))
+                    .appendingPathComponent(History.folderName)
+                    .appendingPathComponent(file)
+                if (try? Data(html.utf8).write(to: url, options: .atomic)) != nil { reportURLs.append(url) }
+            }
         }
     }
 

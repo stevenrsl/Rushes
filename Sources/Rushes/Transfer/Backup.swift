@@ -38,6 +38,9 @@ struct BackupReport: Sendable {
     /// Drives that would not confirm that what they were given is written
     /// down. Nothing copied tonight can be counted on there yet.
     var unflushed: [String] = []
+    /// What was verified, by shoot folder: the manifests' entries, kept for
+    /// the report written once the cards have their verdicts.
+    var entries: [String: [Manifest.Entry]] = [:]
 
     var succeeded: Bool { failures.isEmpty && !cancelled && stopped == nil && unflushed.isEmpty }
 }
@@ -188,6 +191,7 @@ enum Backup {
             report.unflushed.append(drive.lastPathComponent)
         }
 
+        report.entries = entries
         if let drive = drives.first {
             report.folders = plan.shootFolders.map { $0.isEmpty ? drive : drive.appendingPathComponent($0) }
         }
