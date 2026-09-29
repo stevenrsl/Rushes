@@ -82,6 +82,14 @@ enum Verdicts {
                 : "La sauvegarde s'est arrêtée avant la fin de cette carte.")
         }
 
+        // Every card, not only those copied tonight: a shot counted as saved
+        // may have been named by a run cut off before its drives were synced.
+        if !report.unflushed.isEmpty, !mine.isEmpty {
+            level = .hold
+            let names = report.unflushed.map { "« \($0) »" }.joined(separator: ", ")
+            reasons.append("\(names) n'a pas confirmé avoir tout écrit : ce qui vient d'y être copié n'est pas encore sûr.")
+        }
+
         if !scan.isComplete {
             level = .hold
             let folders = Format.count(scan.unreadableFolders.count, "dossier")
@@ -93,6 +101,15 @@ enum Verdicts {
             let kinds = Set(scan.unknown.map(\.ext).filter { !$0.isEmpty }).sorted()
             let named = kinds.isEmpty ? "" : " (\(kinds.prefix(3).joined(separator: ", ")))"
             reasons.append("\(Format.count(scan.unknown.count, "fichier")) d'un type que Rushes ne connaît pas\(named) \(scan.unknown.count > 1 ? "restent" : "reste") sur la carte : \(scan.unknown.count > 1 ? "copie-les" : "copie-le") à la main avant de formater.")
+        }
+
+        if !scan.setAside.isEmpty {
+            if level == .safe { level = .check }
+            let n = scan.setAside.count
+            let s = n > 1 ? "s" : ""
+            let folders = Set(scan.setAside.compactMap(\.hiddenBy).filter { !$0.isEmpty }).sorted()
+            let named = folders.isEmpty ? "" : " (\(folders.prefix(3).joined(separator: ", ")))"
+            reasons.append("\(Format.count(n, "photo ou vidéo", "photos ou vidéos")) cachée\(s) par l'appareil ou rangée\(s) dans un dossier que Rushes ne copie pas\(named) \(n > 1 ? "restent" : "reste") sur la carte : \(n > 1 ? "copie-les" : "copie-la") à la main avant de formater.")
         }
 
         if !plan.conflicts.isEmpty, mine.contains(where: { if case .conflict = $0.status { true } else { false } }) {

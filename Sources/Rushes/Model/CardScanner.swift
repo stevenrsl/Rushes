@@ -61,6 +61,9 @@ enum CameraBrand: String, Sendable, CaseIterable {
 struct UnknownFile: Identifiable, Hashable, Sendable {
     let relativePath: String
     let size: Int64
+    /// For a picture or clip set aside: the folder that hid it, or empty when
+    /// the file itself carries the hidden flag.
+    var hiddenBy: String? = nil
     var id: String { relativePath }
     var name: String { (relativePath as NSString).lastPathComponent }
     var ext: String { (relativePath as NSString).pathExtension.uppercased() }
@@ -81,6 +84,10 @@ struct CardScan: Sendable {
     /// The body the card came from, from its photos' EXIF or Sony's clip XML;
     /// the brand alone when neither says more.
     var camera: CameraIdentity?
+    /// Pictures, clips and sounds found where the camera keeps its own
+    /// housekeeping, or hidden: never copied (a camera's backup of its
+    /// database is not a shot), never passed over either.
+    var setAside: [UnknownFile] = []
 
     var cameraName: String { camera?.name ?? brand.rawValue }
     var unknownCount: Int { unknown.count }
@@ -112,16 +119,21 @@ enum CardScanner {
         return names.contains { ["braw", "r3d"].contains(($0 as NSString).pathExtension.lowercased()) }
     }
 
-    /// Walks the card. Hidden files, AppleDouble files and the camera's own
-    /// housekeeping folders are skipped; everything else is classified.
+    /// Walks the card. The Mac's own files (`._*`, `.Trashes`, `.fseventsd`)
+    /// are skipped; everything else is classified.
+    ///
+    /// The camera's housekeeping folders and files flagged hidden are walked
+    /// too, not copied: a DOS hidden attribute, or a folder that happens to be
+    /// called BACKUP, must not make a picture vanish from the card's account.
+    /// A file the Mac cannot even describe makes the card one read in part.
     static func scan(_ root: URL) throws -> CardScan {
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey]
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isHiddenKey, .fileSizeKey, .contentModificationDateKey, .creationDateKey]
         let rootDepth = root.standardizedFileURL.pathComponents.count
         let refused = RefusedFolders()
         guard let walker = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            options: [.skipsPackageDescendants],
             errorHandler: { url, _ in
                 // A folder the Mac will not open is remembered, not skipped in
                 // silence: a card read in part must never look backed up.
@@ -133,35 +145,60 @@ enum CardScanner {
         }
         var files: [MediaFile] = []
         var unknown: [UnknownFile] = []
+        var setAside: [UnknownFile] = []
         var extensions: Set<String> = []
+        /// Folders walked for the record only, with what to call them.
+        var asideFolders: [(path: String, name: String)] = []
 
         for case let url as URL in walker {
-            let values = try? url.resourceValues(forKeys: Set(keys))
+            let name = url.lastPathComponent
             let components = Array(url.standardizedFileURL.pathComponents.dropFirst(rootDepth))
-            if values?.isDirectory == true {
-                if MediaTypes.skippedFolders.contains(url.lastPathComponent.uppercased()) {
+            let path = components.joined(separator: "/")
+            if name.hasPrefix(".") {
+                walker.skipDescendants()
+                continue
+            }
+            guard let values = try? url.resourceValues(forKeys: Set(keys)) else {
+                refused.add(path)
+                continue
+            }
+            let upper = name.uppercased()
+            if values.isDirectory == true {
+                if MediaTypes.ignoredFolders.contains(upper) {
                     walker.skipDescendants()
+                } else if MediaTypes.skippedFolders.contains(upper) {
+                    asideFolders.append((path, name))
+                } else if values.isHidden == true {
+                    asideFolders.append((path, ""))
                 }
                 continue
             }
-            guard values?.isRegularFile == true else { continue }
+            guard values.isRegularFile == true else { continue }
             let folders = Array(components.dropLast())
+            let aside = asideFolders.last { path.hasPrefix($0.path + "/") }
+            if aside != nil || values.isHidden == true {
+                // Only what could be a shot is worth a line; the camera's
+                // databases and settings are what these folders are for.
+                // A camera's previews (DJI's MISC/THM, a cache) are not shots.
+                let previews = folders.contains { MediaTypes.previewFolders.contains($0.uppercased()) }
+                if !previews, MediaTypes.role(forExtension: url.pathExtension, folders: folders)?.isPrimary == true {
+                    setAside.append(UnknownFile(relativePath: path, size: Int64(values.fileSize ?? 0), hiddenBy: aside?.name ?? ""))
+                }
+                continue
+            }
             guard let role = MediaTypes.role(forExtension: url.pathExtension, folders: folders) else {
-                unknown.append(UnknownFile(
-                    relativePath: components.joined(separator: "/"),
-                    size: Int64(values?.fileSize ?? 0)
-                ))
+                unknown.append(UnknownFile(relativePath: path, size: Int64(values.fileSize ?? 0)))
                 continue
             }
             extensions.insert(url.pathExtension.lowercased())
-            let modified = values?.contentModificationDate ?? .distantPast
+            let modified = values.contentModificationDate ?? .distantPast
             files.append(MediaFile(
                 url: url,
-                relativePath: components.joined(separator: "/"),
-                size: Int64(values?.fileSize ?? 0),
+                relativePath: path,
+                size: Int64(values.fileSize ?? 0),
                 role: role,
                 modified: modified,
-                created: values?.creationDate ?? modified
+                created: values.creationDate ?? modified
             ))
         }
 
@@ -176,7 +213,8 @@ enum CardScanner {
             unknown: unknown,
             unreadableFolders: refused.all,
             brand: CameraBrand.detect(dcimFolders: dcim, topFolders: names, extensions: extensions),
-            camera: nil
+            camera: nil,
+            setAside: setAside
         )
     }
 }

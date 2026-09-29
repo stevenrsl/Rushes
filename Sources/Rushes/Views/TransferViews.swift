@@ -62,6 +62,17 @@ struct CopyingView: View {
                 }
                 .padding(.top, 34)
 
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    let still = context.date.timeIntervalSince(ingest.lastMoved)
+                    if still >= 20, !ingest.progress.quiet {
+                        Text("Plus rien n'avance depuis \(still < 60 ? "\(Int(still)) s" : Format.roughDuration(still)) : le lecteur ou la carte peine peut-être.")
+                            .font(TypeScale.meta)
+                            .foregroundStyle(Palette.late)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 12)
+                    }
+                }
+
                 Button("Interrompre…") { confirmCancel = true }
                     .buttonStyle(.accentLink)
                     .font(TypeScale.meta)
@@ -110,7 +121,7 @@ struct DoneView: View {
                         Grid(alignment: .leading, horizontalSpacing: 24, verticalSpacing: 8) {
                             fact("Fichiers", Format.number(report.filesCopied))
                             fact("Volume", Format.bytes(report.bytesCopied))
-                            fact("Disques", ingest.onlineDrives.map(\.name).joined(separator: ", "))
+                            fact("Disques", ingest.backupDriveNames.joined(separator: ", "))
                             fact("Durée", Format.duration(report.finished.timeIntervalSince(report.started)))
                             if let message = ingest.ejectMessage {
                                 fact("Cartes", message)
@@ -166,6 +177,14 @@ struct DoneView: View {
                             }
                             .buttonStyle(.accentLink)
                             .font(TypeScale.meta)
+                        }
+                        if let first = ingest.reportURLs.first {
+                            Button("Ouvrir le rapport") {
+                                NSWorkspace.shared.open(first)
+                            }
+                            .buttonStyle(.accentLink)
+                            .font(TypeScale.meta)
+                            .help("Une page à garder ou à envoyer, dans _RUSHES à côté du relevé")
                         }
                         if !ingest.ejected, ingest.ejectableCards.contains(where: \.isVolume) {
                             Button("Éjecter les cartes") {
@@ -230,6 +249,9 @@ struct DoneView: View {
         }
         if report.cancelled {
             return "\(Format.count(report.filesCopied, "fichier")) copiés et vérifiés avant l'arrêt ; ils seront reconnus à la reprise."
+        }
+        if report.failures.isEmpty, report.stopped == nil, !report.unflushed.isEmpty {
+            return "Tout a été copié et relu, mais \(report.unflushed.map { "« \($0) »" }.joined(separator: ", ")) n'a pas confirmé l'avoir écrit jusqu'au bout. Ne formate pas ces cartes ce soir."
         }
         return "Ce qui a été copié est vérifié. Le reste est listé ci-dessous, rien n'a été remplacé."
     }

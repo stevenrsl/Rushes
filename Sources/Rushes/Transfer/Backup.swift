@@ -11,6 +11,9 @@ struct BackupProgress: Sendable {
     var filesTotal = 0
     var current = ""
     var verifying = false
+    /// Sweeping partials, writing the records, syncing the drives: no byte
+    /// of a card moves, and that is not a stall.
+    var quiet = false
 
     var fraction: Double { total > 0 ? min(Double(done) / Double(total), 1) : 0 }
 }
@@ -33,10 +36,18 @@ struct BackupReport: Sendable {
     var stopped: String?
     var started = Date()
     var finished = Date()
+    /// When the records were written: the manifests and the report share it.
+    var recorded = Date()
     /// The shoot folders written, on the first drive, for "Afficher dans le Finder".
     var folders: [URL] = []
+    /// Drives that would not confirm that what they were given is written
+    /// down. Nothing copied tonight can be counted on there yet.
+    var unflushed: [String] = []
+    /// What was verified, by shoot folder: the manifests' entries, kept for
+    /// the report written once the cards have their verdicts.
+    var entries: [String: [Manifest.Entry]] = [:]
 
-    var succeeded: Bool { failures.isEmpty && !cancelled && stopped == nil }
+    var succeeded: Bool { failures.isEmpty && !cancelled && stopped == nil && unflushed.isEmpty }
 }
 
 enum Backup {
@@ -51,9 +62,11 @@ enum Backup {
         var state = BackupProgress()
         state.filesTotal = groups.reduce(0) { $0 + $1.files.count }
         state.total = plan.bytesToCopy * Int64(1 + drives.count)
+        state.quiet = true
         progress(state)
 
         sweepPartials(plan, drives: drives)
+        state.quiet = false
 
         // Every drive is told a backup has begun. Cut off before the closing
         // line, the journal says so by itself, and the next run trusts what it
@@ -95,6 +108,7 @@ enum Backup {
                     let hash = try Copier.copy(
                         planned.file.url,
                         to: targets,
+                        size: planned.file.size,
                         modified: planned.file.modified,
                         created: planned.file.created,
                         isCancelled: isCancelled
@@ -157,7 +171,11 @@ enum Backup {
 
         // Whatever happened, what was copied and checked is written down, so
         // the next attempt skips it.
+        state.quiet = true
+        state.current = ""
+        publish(force: true)
         let now = Date()
+        report.recorded = now
         for drive in drives {
             for (folder, list) in entries {
                 let shoot = folder.isEmpty ? drive : drive.appendingPathComponent(folder)
@@ -166,21 +184,36 @@ enum Backup {
                 } catch {
                     report.failures.append(.init(file: History.folderName, message: "Le relevé n'a pas pu être écrit sur \(drive.lastPathComponent) : \(error.localizedDescription)"))
                 }
+                if plan.writesMHL {
+                    do {
+                        try ASCMHL.write(list, in: shoot, at: now, version: Bundle.main.version)
+                    } catch {
+                        report.failures.append(.init(file: ASCMHL.folderName, message: "L'ASC MHL n'a pas pu être écrit sur \(drive.lastPathComponent) : \(error.localizedDescription)"))
+                    }
+                }
             }
         }
-        // The closing line comes last, and only if nothing was left undone:
-        // until it is there, this backup counts as unfinished, and the next
-        // plan skips what it verified whatever the setting says. That is what
-        // "Reprendre" used to keep in memory, and lost when the app quit.
-        if report.succeeded {
-            let end = JournalLine(kind: .end, backup: id, at: now)
-            for drive in drives { try? Journal.append([end], on: drive) }
+        // The closing line comes last and says whether anything was left
+        // undone. Until a complete one is written, this drive counts as having
+        // a backup to resume, and the next plan skips what was verified
+        // whatever the setting says. That is what "Reprendre" used to keep in
+        // memory, and lost when the app quit. A crash writes no line at all,
+        // which reads the same.
+        //
+        // Before that, and before anyone is told a card can be formatted, the
+        // drives are synced whole. Even with nothing copied tonight: a
+        // "Reprendre" after a crash may find a card's every shot already there,
+        // named by a run that never reached this line.
+        if !groups.isEmpty {
+            for drive in drives where !Journal.flushDevice(on: drive) {
+                report.unflushed.append(drive.lastPathComponent)
+            }
         }
-        // Before anyone is told a card can be formatted, the drives are asked
-        // to put what they are holding onto the platters. fsync alone leaves
-        // it in the drive's own cache, which a pulled cable empties.
-        for drive in drives { Journal.flushDevice(on: drive) }
+        let complete = report.failures.isEmpty && !report.cancelled && report.stopped == nil && report.unflushed.isEmpty
+        let end = JournalLine(kind: .end, backup: id, at: now, complete: complete)
+        for drive in drives { try? Journal.append([end], on: drive) }
 
+        report.entries = entries
         if let drive = drives.first {
             report.folders = plan.shootFolders.map { $0.isEmpty ? drive : drive.appendingPathComponent($0) }
         }

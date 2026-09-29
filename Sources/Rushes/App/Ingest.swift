@@ -37,6 +37,11 @@ final class Ingest {
         var available: Int64?
         var total: Int64?
         var isOnline: Bool
+        /// `msdos` is FAT32, which cannot hold a file of 4 GB.
+        var fileSystem: String?
+        /// The volume it sits on, read with the drives rather than at every
+        /// redraw: two folders on one volume are one copy.
+        var volume: String
         var id: String { url.path }
     }
 
@@ -68,6 +73,9 @@ final class Ingest {
     /// Bytes read from the cards per second, smoothed.
     private(set) var speed: Double = 0
     private(set) var remaining: TimeInterval?
+    /// When a byte last moved. A copy that is slow and one that is stuck look
+    /// the same on a percentage; this tells them apart.
+    private(set) var lastMoved = Date()
     private(set) var ejectMessage: String?
     private(set) var ejected = false
 
@@ -206,7 +214,7 @@ final class Ingest {
                 let camera = fromPhotos
                     ?? CameraLetters.sonyDevice(in: scan.groups)
                     ?? (scan.brand == .unknown ? nil : CameraIdentity(name: scan.brand.rawValue, serial: nil))
-                scan = CardScan(root: scan.root, groups: groups, orphans: scan.orphans, unknown: scan.unknown, unreadableFolders: scan.unreadableFolders, brand: scan.brand, camera: camera)
+                scan = CardScan(root: scan.root, groups: groups, orphans: scan.orphans, unknown: scan.unknown, unreadableFolders: scan.unreadableFolders, brand: scan.brand, camera: camera, setAside: scan.setAside)
                 let finished = scan
                 await MainActor.run {
                     self.update(id) { $0.state = .ready(finished) }
@@ -280,7 +288,9 @@ final class Ingest {
                 name: name,
                 available: online ? VolumeWatcher.availableBytes(at: url) : nil,
                 total: online ? VolumeWatcher.totalBytes(at: url) : nil,
-                isOnline: online
+                isOnline: online,
+                fileSystem: online ? VolumeWatcher.fileSystem(of: url) : nil,
+                volume: volume?.path ?? path
             )
         }
     }
@@ -290,6 +300,10 @@ final class Ingest {
     // MARK: Plan
 
     func schedulePlan() {
+        // The plan running is the one that counts until it ends; `reset`
+        // makes the next one. Remembering tonight's client at ⌘↩ used to
+        // replan 150 ms into the copy.
+        guard !isCopying else { return }
         isPlanning = true
         planTask?.cancel()
         planGeneration += 1
@@ -304,12 +318,14 @@ final class Ingest {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             let plan = {
-                var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives)
+                var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives, isCancelled: { Task.isCancelled })
                 plan.drives = drives.map(\.path)
                 plan.generation = generation
                 plan.namePattern = settings.namePattern
+                plan.writesMHL = settings.writeMHL
                 return plan
             }()
+            guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard generation == self.planGeneration else { return }
                 self.plan = plan
@@ -326,57 +342,16 @@ final class Ingest {
 
     /// Why the button is not ready, the most useful first.
     var blockers: [String] {
-        var reasons: [String] = []
-        let template = NameTemplate(settings.namePattern)
-        if cards.isEmpty { reasons.append("Insère une carte ou ajoute un dossier.") }
-        else if isScanning { reasons.append("Lecture des cartes en cours…") }
-        else if isPlanning || !isCurrent { reasons.append("Préparation de l'aperçu…") }
-        else if readyCards.isEmpty { reasons.append("Aucune carte sélectionnée.") }
-        if drives.isEmpty { reasons.append("Choisis un disque de destination.") }
-        for drive in drives where !drive.isOnline { reasons.append("« \(drive.name) » n'est pas branché.") }
-        let missing: [(NameToken, String)] = [(.initials, settings.initials), (.client, settings.client), (.project, settings.project)]
-        for (token, value) in missing where template.uses(token) || NameTemplate(settings.folderPattern).uses(token) || settings.layout.uses(token) {
-            if Sanitize.field(value).isEmpty { reasons.append("Il manque \(token == .initials ? "tes initiales" : token == .client ? "le client" : "le projet").") }
-        }
-        if template.uses(.camera) || settings.layout.uses(.camera), readyCards.contains(where: { $0.cameraLabel.isEmpty }) { reasons.append("Une carte n'a pas de lettre de caméra.") }
-        if !template.isUnique { reasons.append("Le modèle doit contenir {NUM} ou {ORIG}, sinon deux photos auraient le même nom.") }
-        if !plan.conflicts.isEmpty { reasons.append("\(plan.conflicts.count) nom\(plan.conflicts.count > 1 ? "s" : "") déjà pris : rien ne sera remplacé.") }
-        for drive in onlineDrives {
-            // With a margin: a disk filled to its last byte fails in the middle
-            // of the night, and the folders, the manifests and exFAT's large
-            // clusters all take a little more than the files themselves.
-            let needed = plan.bytesToCopy + max(64 << 20, plan.bytesToCopy / 100)
-            if let free = drive.available, free < needed {
-                reasons.append("Pas assez de place sur « \(drive.name) » : il manque \(Format.bytes(needed - free)).")
-            }
-        }
-        // Two folders on one disk are one copy, however they are named. Saying
-        // "sur deux disques" then would be the one lie that matters.
-        var volumes: [String: String] = [:]
-        for drive in onlineDrives {
-            let volume = VolumeWatcher.volume(of: drive.url)?.path ?? drive.url.path
-            if let first = volumes[volume], first != drive.name {
-                reasons.append("« \(first) » et « \(drive.name) » sont sur le même disque : ce ne serait qu'une seule copie.")
-            } else if volumes[volume] == nil {
-                volumes[volume] = drive.name
-            }
-        }
-        // The copy in progress is named `.<name>.rushes-partial`, sixteen
-        // characters longer: a name the drive would accept, but its partial
-        // not, fails file by file all night.
-        if let long = plan.toCopy.flatMap(\.files).first(where: { $0.name.utf8.count + 16 > 255 }) {
-            reasons.append("« \(long.name) » est trop long pour être écrit : raccourcis le modèle de nom.")
-        }
-        if reasons.isEmpty, plan.toCopy.isEmpty, !plan.groups.isEmpty {
-            if plan.unticked == plan.groups.count {
-                reasons.append("Aucun type de fichier coché dans Fichiers.")
-            } else if plan.unticked > 0 {
-                reasons.append("Rien de nouveau parmi les types cochés.")
-            } else {
-                reasons.append("Tout est déjà sauvegardé sur chaque disque.")
-            }
-        }
-        return reasons
+        Readiness(
+            cards: cards.count,
+            scanning: isScanning,
+            planning: isPlanning || !isCurrent,
+            ready: readyCards.count,
+            cardWithoutLetter: readyCards.contains { $0.cameraLabel.isEmpty },
+            drives: drives.map { .init(name: $0.name, isOnline: $0.isOnline, available: $0.available, fileSystem: $0.fileSystem, volume: $0.volume) },
+            settings: settings,
+            plan: plan
+        ).blockers
     }
 
     /// What this backup will not cover, said before it runs rather than found
@@ -393,12 +368,28 @@ final class Ingest {
         if unknown > 0 {
             list.append("\(Format.count(unknown, "fichier")) d'un type que Rushes ne connaît pas \(unknown > 1 ? "restent" : "reste") sur la carte, sous « Laissés sur la carte ».")
         }
+        let aside = readyCards.reduce(0) { $0 + ($1.scan?.setAside.count ?? 0) }
+        if aside > 0 {
+            list.append("\(Format.count(aside, "photo ou vidéo", "photos ou vidéos")) \(aside > 1 ? "sont cachées ou rangées" : "est cachée ou rangée") là où l'appareil range ses propres fichiers. Rushes ne \(aside > 1 ? "les" : "la") copie pas, et \(aside > 1 ? "les" : "la") nomme sous « Laissés sur la carte ».")
+        }
         return list
     }
 
     /// What each card was told at the end of the last backup: the page's last
     /// word, and the one the camera acts on.
     private(set) var verdicts: [CardVerdict] = []
+    /// The plan being run, kept apart from the one on screen: a setting
+    /// changed while copying makes a new plan, and a card's verdict must be
+    /// judged on what was actually asked of the drives, not on that one.
+    private var runningPlan = IngestPlan()
+
+    /// The drives the last backup wrote to, by name, even if one has since
+    /// been unplugged.
+    var backupDriveNames: [String] {
+        runningPlan.drives.map { path in
+            drives.first { $0.url.path == path }?.name ?? URL(fileURLWithPath: path).lastPathComponent
+        }
+    }
 
     /// The cards nothing was left behind on. A card told "ne pas formater" is
     /// never ejected: ejecting it is the moment it goes back in the camera.
@@ -424,17 +415,20 @@ final class Ingest {
         // The plan's own drives, not today's: the two are equal here, and this
         // is the pair that was counted, named and checked against.
         let drives = plan.drives.map { URL(fileURLWithPath: $0) }
-        settings.recentClients = IngestSettings.remembering(settings.client, in: settings.recentClients)
-        settings.recentProjects = IngestSettings.remembering(settings.project, in: settings.recentProjects)
         let plan = plan
+        runningPlan = plan
         cancelFlag.reset()
         verdicts = []
         phase = .copying
+        // Remembered once copying, when a change of settings makes no plan.
+        settings.recentClients = IngestSettings.remembering(settings.client, in: settings.recentClients)
+        settings.recentProjects = IngestSettings.remembering(settings.project, in: settings.recentProjects)
         progress = BackupProgress()
         speed = 0
         doneRate = 0
         remaining = nil
         lastSample = nil
+        lastMoved = .now
         ejectMessage = nil
         ejected = false
         // The screen may sleep; the Mac may not, and quitting is refused.
@@ -466,6 +460,7 @@ final class Ingest {
 
     private func advance(_ state: BackupProgress) {
         guard isCopying else { return }
+        if state.quiet || state.done != progress.done || state.filesDone != progress.filesDone { lastMoved = .now }
         progress = state
         let now = Date()
         if let last = lastSample {
@@ -488,14 +483,16 @@ final class Ingest {
         activity = nil
         verdicts = readyCards.compactMap { card in
             guard let scan = card.scan else { return nil }
-            return Verdicts.of(cardID: card.id, cardName: card.name, scan: scan, plan: plan, report: report)
+            return Verdicts.of(cardID: card.id, cardName: card.name, scan: scan, plan: runningPlan, report: report)
         }
+        writeReports(report)
         if let onQuit {
             self.onQuit = nil
             onQuit()
             return
         }
         phase = .finished(report)
+        remember(report)
         refreshDrives()
         notify(report)
         if report.succeeded, settings.ejectWhenDone, !ejectableCards.isEmpty {
@@ -503,11 +500,60 @@ final class Ingest {
         }
     }
 
+    /// The readable reports of the last backup, first drive first.
+    private(set) var reportURLs: [URL] = []
+
+    /// Writes the page a person reads beside each shoot's manifest, on every
+    /// drive, once the cards have been told. A report that cannot be written
+    /// costs nothing but itself: the JSON and the CSV are already there.
+    private func writeReports(_ report: BackupReport) {
+        reportURLs = []
+        let names = backupDriveNames
+        let cards = verdicts.map { verdict in
+            TransferReport.Card(
+                name: verdict.cardName, title: verdict.title, sentence: verdict.sentence,
+                level: verdict.level == .safe ? "safe" : verdict.level == .check ? "check" : "hold"
+            )
+        }
+        let file = TransferReport.fileName(report.recorded)
+        for path in runningPlan.drives {
+            let drive = URL(fileURLWithPath: path)
+            for (folder, entries) in report.entries.sorted(by: { $0.key < $1.key }) {
+                let html = TransferReport.html(
+                    shoot: folder, report: report, entries: entries, cards: cards,
+                    drives: names, version: Bundle.main.version
+                )
+                let url = (folder.isEmpty ? drive : drive.appendingPathComponent(folder))
+                    .appendingPathComponent(History.folderName)
+                    .appendingPathComponent(file)
+                // Never over a file, even one of ours: nothing on a drive is replaced.
+                if (try? Data(html.utf8).write(to: url, options: .withoutOverwriting)) != nil { reportURLs.append(url) }
+            }
+        }
+    }
+
+    /// Keeps the pace of a backup long enough to say something, for the next
+    /// night's estimate. Small ones are all overhead and would promise too
+    /// much; the drives' count is part of it, since each is read back.
+    private func remember(_ report: BackupReport) {
+        let seconds = report.finished.timeIntervalSince(report.started)
+        guard report.succeeded, report.bytesCopied >= 256 << 20, seconds > 5 else { return }
+        let moved = Double(report.bytesCopied) * Double(1 + runningPlan.drives.count)
+        settings.measuredThroughput = moved / seconds
+    }
+
+    /// How long the plan on screen should take, from the last backup's pace.
+    var estimatedDuration: TimeInterval? {
+        guard settings.measuredThroughput > 0, plan.bytesToCopy > 0 else { return nil }
+        let moved = Double(plan.bytesToCopy) * Double(1 + max(onlineDrives.count, 1))
+        return moved / settings.measuredThroughput
+    }
+
     private func notify(_ report: BackupReport) {
         let content = UNMutableNotificationContent()
         if report.succeeded {
             content.title = "Sauvegarde vérifiée"
-            var body = "\(Format.count(report.filesCopied, "fichier")) · \(Format.bytes(report.bytesCopied)) sur \(Format.count(onlineDrives.count, "disque"))."
+            var body = "\(Format.count(report.filesCopied, "fichier")) · \(Format.bytes(report.bytesCopied)) sur \(Format.count(runningPlan.drives.count, "disque"))."
             // The last word is about the cards, because that is what gets
             // formatted in the morning.
             let held = verdicts.filter { $0.level != .safe }
@@ -520,7 +566,10 @@ final class Ingest {
             content.body = "\(Format.count(report.filesCopied, "fichier")) copiés et vérifiés avant l'arrêt."
         } else {
             content.title = "Sauvegarde incomplète"
-            content.body = report.stopped ?? "\(Format.count(report.failures.count, "fichier")) n'ont pas pu être copiés."
+            content.body = report.stopped
+                ?? (report.failures.isEmpty
+                    ? "Un disque n'a pas confirmé avoir tout écrit. Ne formate pas les cartes ce soir."
+                    : "\(Format.count(report.failures.count, "fichier")) n'\(report.failures.count > 1 ? "ont" : "a") pas pu être copié\(report.failures.count > 1 ? "s" : "").")
         }
         content.sound = .default
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))

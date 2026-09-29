@@ -98,7 +98,7 @@ struct PreviewBlock: View {
     }
 
     private var leftOutCount: Int {
-        ingest.plan.leftOutCount + ingest.readyCards.reduce(0) { $0 + ($1.scan?.orphans.count ?? 0) + ($1.scan?.unknown.count ?? 0) }
+        ingest.plan.leftOutCount + ingest.readyCards.reduce(0) { $0 + ($1.scan?.orphans.count ?? 0) + ($1.scan?.unknown.count ?? 0) + ($1.scan?.setAside.count ?? 0) }
     }
 
     private var emptyText: String {
@@ -157,6 +157,13 @@ struct PreviewBlock: View {
                     rows.append(Row(id: card.id + "/" + file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
                                     size: file.size, camera: card.cameraLabel,
                                     note: file.ext.isEmpty ? "Type de fichier inconnu de Rushes" : "« \(file.ext) » : type de fichier inconnu de Rushes"))
+                }
+                for file in card.scan?.setAside ?? [] {
+                    rows.append(Row(id: card.id + "/" + file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
+                                    size: file.size, camera: card.cameraLabel,
+                                    note: (file.hiddenBy ?? "").isEmpty
+                                        ? "Caché par l'appareil : à copier à la main si c'est une prise"
+                                        : "Dans « \(file.hiddenBy!) », où l'appareil range ses propres fichiers"))
                 }
             }
             return rows

@@ -121,11 +121,23 @@ enum MediaTypes {
     /// Folders whose pictures are the camera's previews, not photographs.
     static let thumbnailFolders: Set<String> = ["THMBNL", "THUMBNAIL", "THUMBNAILS"]
 
-    /// Folders never walked: the camera's databases, the Mac's and Windows'
-    /// housekeeping, DJI's and Canon's caches, AVCHD's playlists.
+    /// Folders whose files are never copied: the camera's databases, DJI's
+    /// and Canon's caches, AVCHD's playlists. They are still walked, because
+    /// the same names can hold someone's pictures on a folder added by hand:
+    /// a picture or clip found there is named, never passed over.
     static let skippedFolders: Set<String> = [
         "MISC", "AVF_INFO", "DATABASE", "CANONMSC", "GENERAL", "CLIPINF", "PLAYLIST",
-        "BACKUP", "LOST.DIR", "SYSTEM VOLUME INFORMATION", "$RECYCLE.BIN", "_RUSHES",
+        "BACKUP", "LOST.DIR",
+    ]
+
+    /// Folders of previews inside the housekeeping: what is in them is never
+    /// named as a shot left on the card.
+    static let previewFolders: Set<String> = thumbnailFolders.union(["THM", "CACHE", "PREVIEW", "PREVIEWS"])
+
+    /// Folders not even walked: Windows' bin and index, and Rushes' own
+    /// records on a drive added as a card.
+    static let ignoredFolders: Set<String> = [
+        "SYSTEM VOLUME INFORMATION", "$RECYCLE.BIN", "_RUSHES",
     ]
 
     /// The role of a file from its extension and the folders above it (from the

@@ -208,6 +208,11 @@ private struct CopySettings: View {
             }
 
             Section {
+                Toggle("Écrire un ASC MHL dans chaque tournage", isOn: $ingest.settings.writeMHL)
+                Help("Le format de liste de hashs que lisent les DIT, Silverstack et les post-productions. Chaque sauvegarde ajoute une génération dans un dossier ascmhl, à côté des fichiers, sans jamais réécrire les précédentes. Le relevé de Rushes, lui, est toujours écrit.")
+            }
+
+            Section {
                 Picker("Apparence", selection: $ingest.settings.appearance) {
                     ForEach(IngestSettings.Appearance.allCases) { Text($0.title).tag($0) }
                 }

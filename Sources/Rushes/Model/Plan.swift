@@ -56,6 +56,8 @@ struct IngestPlan: Sendable {
     /// The name pattern it used, written into the journal so a folder can be
     /// explained months later.
     var namePattern = ""
+    /// Whether each shoot folder gets its ASC MHL generation.
+    var writesMHL = false
     /// The drives this plan was made for, and the change it was made from: a
     /// plan is only ever run against the drives it counted, and never while a
     /// newer one is being made. A name typed a second before ⌘↩ would
@@ -73,6 +75,16 @@ struct IngestPlan: Sendable {
     }
     var leftOutCount: Int { groups.reduce(0) { $0 + $1.leftOut.count } }
     var days: [ShootDay] { Array(Set(toCopy.map(\.day))).sorted() }
+
+    /// FAT32 keeps a file's size in 32 bits: one byte short of 4 GiB is the
+    /// most it can hold. A clip over that fails mid-night with `EFBIG`, and
+    /// that stops the whole backup.
+    static let fatLimit: Int64 = 0xFFFF_FFFF
+
+    /// The first file too big for a FAT32 drive, to be said before ⌘↩.
+    var tooBigForFAT: PlannedFile? {
+        toCopy.lazy.flatMap(\.files).first { $0.file.size > Self.fatLimit }
+    }
 }
 
 /// What is already on a drive, in one shoot's folder.
@@ -143,7 +155,8 @@ enum Planner {
         fixedDay: ShootDay?,
         drives: [URL],
         index: (URL, String) -> DestinationIndex = DestinationIndex.load,
-        journal: (URL) -> DriveJournal = DriveJournal.load
+        journal: (URL) -> DriveJournal = DriveJournal.load,
+        isCancelled: () -> Bool = { false }
     ) -> IngestPlan {
         let template = NameTemplate(settings.namePattern)
         let folderTemplate = NameTemplate(settings.folderPattern)
@@ -189,6 +202,9 @@ enum Planner {
         var folders: [String] = []
 
         for (source, group) in items {
+            // A newer keystroke has made this plan useless; each shot costs a
+            // walk of the drives' folders and a stat per file.
+            if isCancelled() { break }
             let day = fixedDay ?? ShootDay(date: group.captureDate, cutoffHour: settings.dayCutoffHour)
             var values = NameValues(
                 day: day,

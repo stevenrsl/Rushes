@@ -85,7 +85,12 @@ hdiutil detach /Volumes/SONY-TEST && rm /tmp/carte.dmg
 Sur chaque disque, dans le dossier du tournage, `_RUSHES/<date-heure>.json` et `.csv` : le nom
 d'origine de chaque fichier, son nouveau nom, sa taille et son empreinte. C'est le seul endroit
 où survivent les noms donnés par l'appareil, le jour où un client redemande « la DSC01234 ». Le
-CSV s'ouvre dans Numbers ou Excel.
+CSV s'ouvre dans Numbers ou Excel. À côté, `rapport-<date-heure>.html` dit la même nuit pour un
+humain : le verdict de chaque carte et chaque fichier avec son nom d'origine. Il s'ouvre dans
+n'importe quel navigateur, s'imprime, et s'envoie à un client.
+
+Si le réglage est coché (Copie › Écrire un ASC MHL), un dossier `ascmhl/` dans chaque tournage
+tient la même liste au format standard que lisent les DIT et les post-productions.
 
 À la racine de chaque disque, `_RUSHES/journal.jsonl` tient une ligne par fichier, écrite au
 moment où il est vérifié. C'est ce qui permet de reprendre une sauvegarde coupée, de reconnaître
@@ -94,6 +99,13 @@ jamais redonner un numéro déjà attribué. Ces fichiers se suppriment sans rie
 
 Rien n'est écrit ailleurs : pas de base de données sur le Mac, pas de dossier caché dans la
 maison. Les réglages tiennent dans `~/Library/Preferences/eu.stevenrsl.rushes.plist`.
+
+## Vérifier un disque, des mois plus tard
+
+Fichier › Vérifier un disque (⇧⌘V), avant de vider l'autre copie ou au retour d'un voyage. On
+choisit un disque entier ou le dossier d'un tournage : chaque fichier que Rushes y a copié est
+relu et comparé à son relevé. Ce qui manque, a changé de taille ou ne se lit plus pareil est
+nommé, avec le nom que lui avait donné l'appareil. La vérification ne fait que lire.
 
 ## Désinstaller
 
@@ -108,7 +120,7 @@ Les rushes déjà copiés et les relevés restent sur les disques, évidemment.
 
 ```bash
 ./build.sh debug                                    # build de débogage
-swift test --scratch-path /tmp/rushes-build         # 66 tests
+swift test --scratch-path /tmp/rushes-build         # 98 tests
 swift Tools/make-icon.swift "$(pwd)"                # redessine l'icône
 ```
 

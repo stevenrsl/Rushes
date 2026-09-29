@@ -73,6 +73,73 @@ struct JournalTests {
         #expect(next.toCopy.isEmpty)
     }
 
+    @Test("a backup that went well ends complete, and its records share one time")
+    func completeEnd() throws {
+        let box = try Sandbox()
+        let night = try firstNight(box)
+        #expect(Journal.read(on: night.drive).last?.kind == .end)
+        #expect(Journal.read(on: night.drive).last?.complete == true)
+        #expect(!DriveJournal.load(night.drive).interrupted)
+        let records = night.drive.appendingPathComponent("260921_Kaffi_Lexus/_RUSHES")
+        let stem = History.stamp(night.report.recorded)
+        #expect(FileManager.default.fileExists(atPath: records.appendingPathComponent(stem + ".json").path))
+        #expect(TransferReport.fileName(night.report.recorded) == "rapport-\(stem).html")
+    }
+
+    @Test("a backup that failed is resumed, and the setting comes back once one finishes")
+    func failedBackupIsResumedOnce() throws {
+        let box = try Sandbox()
+        let night = try firstNight(box)
+        var settings = night.settings
+        settings.skipAlreadyCopied = false
+
+        // A backup that ended with a file it could not copy.
+        try Journal.append([
+            JournalLine(kind: .start, backup: "failed", at: Date()),
+            JournalLine(kind: .end, backup: "failed", at: Date(), complete: false),
+        ], on: night.drive)
+        #expect(DriveJournal.load(night.drive).interrupted)
+        #expect(try plan(night.card, night.drive, settings).toCopy.isEmpty)
+
+        // "Reprendre" finishes whole: from then on, Steven's choice stands.
+        try Journal.append([
+            JournalLine(kind: .start, backup: "resumed", at: Date()),
+            JournalLine(kind: .end, backup: "resumed", at: Date(), complete: true),
+        ], on: night.drive)
+        #expect(!DriveJournal.load(night.drive).interrupted)
+        #expect(try plan(night.card, night.drive, settings).toCopy.count == 3)
+    }
+
+    @Test("a real cancel writes an unfinished end, and the next plan copies only the rest")
+    func cancelledBackupResumes() throws {
+        let box = try Sandbox()
+        let card = try box.folder("CARD")
+        let drive = try box.folder("SSD")
+        let t = local(2026, 9, 21, 22, 0)
+        for n in 1...4 {
+            try box.write(String(format: "DCIM/100MSDCF/DSC%05d.ARW", n), in: card, size: 20_000, date: t.addingTimeInterval(Double(n) * 60))
+        }
+        var settings = IngestSettings()
+        settings.initials = "SR"
+        settings.client = "Kaffi"
+        settings.project = "Lexus"
+        settings.namePattern = NamePreset.standard.pattern
+        settings.skipAlreadyCopied = false
+
+        let first = try plan(card, drive, settings)
+        let flag = CancelFlag()
+        let report = Backup.run(first, drives: [drive], isCancelled: { flag.isSet }) { state in
+            if state.filesDone == 2 { flag.set() }
+        }
+        #expect(report.cancelled)
+        #expect(report.filesCopied == 2)
+        #expect(Journal.read(on: drive).last?.complete == false)
+
+        let next = try plan(card, drive, settings)
+        #expect(next.alreadyCopied == 2)
+        #expect(next.toCopy.map(\.baseName) == ["260921_SR_Kaffi_Lexus_0003", "260921_SR_Kaffi_Lexus_0004"])
+    }
+
     @Test("a number given once is never given again, even after the drive is emptied")
     func numbersAreNeverReused() throws {
         let box = try Sandbox()

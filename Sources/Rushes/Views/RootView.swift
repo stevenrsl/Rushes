@@ -103,7 +103,12 @@ private struct PrepareView: View {
         if days.count == 1 { text += ", du \(Format.day(days[0]))" } else if days.count > 1 { text += ", sur \(days.count) jours" }
         let drives = ingest.onlineDrives.map(\.name)
         if !drives.isEmpty { text += ", vers " + drives.joined(separator: " et ") }
-        return text + "."
+        text += "."
+        // Worth saying only when it decides something: staying up or not.
+        if let duration = ingest.estimatedDuration, duration >= 120 {
+            text += " Environ \(Format.roughDuration(duration)) au rythme de la dernière fois, fini vers \(Format.time(Date().addingTimeInterval(duration)))."
+        }
+        return text
     }
 }
 

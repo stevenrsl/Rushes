@@ -45,6 +45,16 @@ final class VolumeWatcher {
         (try? url.resourceValues(forKeys: [.volumeTotalCapacityKey]).volumeTotalCapacity).map(Int64.init)
     }
 
+    /// The file system's short name, as `mount` prints it: `apfs`, `exfat`,
+    /// `msdos` for FAT32, `smbfs`.
+    nonisolated static func fileSystem(of url: URL) -> String? {
+        var info = statfs()
+        guard statfs(url.path, &info) == 0 else { return nil }
+        return withUnsafeBytes(of: &info.f_fstypename) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }
+
     /// The volume a folder sits on.
     static func volume(of url: URL) -> URL? {
         try? url.resourceValues(forKeys: [.volumeURLKey]).volume

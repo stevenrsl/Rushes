@@ -48,6 +48,10 @@ struct JournalLine: Codable, Sendable {
     /// On `start` lines, so a folder can still be explained months later.
     var version: String?
     var pattern: String?
+    /// On `end` lines: whether everything planned was copied and verified.
+    /// Before 2026-09-28 an `end` was written only then, so a line without it
+    /// is a complete one.
+    var complete: Bool?
 }
 
 enum Journal {
@@ -88,14 +92,23 @@ enum Journal {
         guard fsync(fd) == 0 else { throw JournalError(path: url.path) }
     }
 
-    /// Asks the drive to write what it still holds in its own cache all the
-    /// way down. `fsync` only hands the bytes to the drive; `F_FULLFSYNC` is
-    /// what makes them survive the cable coming out a second later.
-    static func flushDevice(on drive: URL) {
+    /// Asks the drive to write everything down, and says whether it did.
+    ///
+    /// `fsync` only hands a file's bytes to the drive, and each copy was given
+    /// its name after that: on exFAT the folder entries holding the names can
+    /// sit in the Mac's cache for half a minute. Pulled out then, the drive
+    /// keeps a hidden partial and no name, and the next backup sweeps it away,
+    /// maybe after the card was formatted. So the whole volume is synced,
+    /// then the drive told to empty its own cache (`F_FULLFSYNC`), before a
+    /// single card hears that it may be formatted.
+    static func flushDevice(on drive: URL) -> Bool {
+        if sync_volume_np(drive.path, SYNC_VOLUME_FULLSYNC | SYNC_VOLUME_WAIT) == 0 { return true }
+        // A volume that does not take it (a network share) still gets the
+        // drive's cache emptied through a file of ours.
         let fd = open(url(on: drive).path, O_RDONLY)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else { return false }
         defer { close(fd) }
-        _ = fcntl(fd, F_FULLFSYNC)
+        return fcntl(fd, F_FULLFSYNC) != -1
     }
 
     /// Every line the drive holds. A line that will not decode is skipped: the
@@ -122,8 +135,11 @@ extension Bundle {
 
 struct JournalError: LocalizedError {
     let path: String
+    /// Read the moment the call failed: by the time the message is shown,
+    /// `errno` belongs to whatever ran since.
+    var code: Int32 = errno
     var errorDescription: String? {
-        "Le journal n'a pas pu être écrit (\(String(cString: strerror(errno)))) : \((path as NSString).lastPathComponent)"
+        "Le journal n'a pas pu être écrit (\(String(cString: strerror(code)))) : \((path as NSString).lastPathComponent)"
     }
 }
 
@@ -147,8 +163,11 @@ struct DriveJournal: Sendable {
         var stem: String
         var category: String?
     }
-    /// A backup was started here and never ended: what it did verify is known
-    /// good, and is skipped even when the setting copies saved shots again.
+    /// A backup here was cut off or left something undone, and no backup has
+    /// finished whole since: what it did verify is known good, and is skipped
+    /// even when the setting copies saved shots again. The next complete
+    /// backup, which is "Reprendre", closes the matter; one failed file no
+    /// longer overrides the setting for the rest of the drive's life.
     var interrupted = false
 
     /// A plan is made again at every keystroke, and a year of shooting is a
@@ -164,12 +183,19 @@ struct DriveJournal: Sendable {
     private static func read(_ drive: URL) -> DriveJournal {
         var journal = DriveJournal()
         var open: Set<String> = []
+        var unfinished = false
         for line in Journal.read(on: drive) {
             switch line.kind {
             case .start:
                 open.insert(line.backup)
             case .end:
                 open.remove(line.backup)
+                if line.complete == false {
+                    unfinished = true
+                } else {
+                    unfinished = false
+                    open.removeAll()
+                }
             case .file:
                 guard let path = line.path, let fingerprint = line.fingerprint else { continue }
                 journal.saved[fingerprint] = Saved(path: path, size: line.size ?? 0)
@@ -177,7 +203,7 @@ struct DriveJournal: Sendable {
                 journal.namesGiven[line.shoot ?? "", default: []].append(Name(stem: stem, category: line.category))
             }
         }
-        journal.interrupted = !open.isEmpty
+        journal.interrupted = unfinished || !open.isEmpty
         return journal
     }
 
