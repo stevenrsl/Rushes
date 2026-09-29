@@ -62,6 +62,17 @@ struct CopyingView: View {
                 }
                 .padding(.top, 34)
 
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    let still = context.date.timeIntervalSince(ingest.lastMoved)
+                    if still >= 20 {
+                        Text("Plus rien n'avance depuis \(still < 60 ? "\(Int(still)) s" : Format.roughDuration(still)) : le lecteur ou la carte peine peut-être.")
+                            .font(TypeScale.meta)
+                            .foregroundStyle(Palette.late)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 12)
+                    }
+                }
+
                 Button("Interrompre…") { confirmCancel = true }
                     .buttonStyle(.accentLink)
                     .font(TypeScale.meta)

@@ -38,6 +38,10 @@ struct IngestSettings: Codable, Hashable, Sendable {
     var destinations: [String] = []
     var recentClients: [String] = []
     var recentProjects: [String] = []
+    /// Bytes read and read back per second over the last backup worth
+    /// measuring, cards and drives together: what "fini vers 4 h 10" is
+    /// worked out from before ⌘↩. Zero until one has run.
+    var measuredThroughput: Double = 0
     /// What was saved knows which changes it has already seen. Settings
     /// written before this existed read as 0.
     var schema = IngestSettings.schema
@@ -69,6 +73,7 @@ struct IngestSettings: Codable, Hashable, Sendable {
         destinations = try c.decodeIfPresent([String].self, forKey: .destinations) ?? d.destinations
         recentClients = try c.decodeIfPresent([String].self, forKey: .recentClients) ?? d.recentClients
         recentProjects = try c.decodeIfPresent([String].self, forKey: .recentProjects) ?? d.recentProjects
+        measuredThroughput = try c.decodeIfPresent(Double.self, forKey: .measuredThroughput) ?? d.measuredThroughput
         schema = try c.decodeIfPresent(Int.self, forKey: .schema) ?? 0
     }
 

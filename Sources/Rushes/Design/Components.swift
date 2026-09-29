@@ -30,6 +30,13 @@ enum Format {
         return "\(s / 3600) h \(String(format: "%02d", (s % 3600) / 60))"
     }
 
+    /// A length of time as a promise: to the minute, never the second.
+    static func roughDuration(_ seconds: TimeInterval) -> String {
+        let m = max(Int((seconds / 60).rounded()), 1)
+        if m < 60 { return "\(m) min" }
+        return "\(m / 60) h \(String(format: "%02d", m % 60))"
+    }
+
     static func day(_ day: ShootDay) -> String {
         day.date.formatted(.dateTime.locale(Locale(identifier: "fr_FR")).weekday(.wide).day().month(.wide))
     }

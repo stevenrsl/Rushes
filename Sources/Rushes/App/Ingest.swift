@@ -70,6 +70,9 @@ final class Ingest {
     /// Bytes read from the cards per second, smoothed.
     private(set) var speed: Double = 0
     private(set) var remaining: TimeInterval?
+    /// When a byte last moved. A copy that is slow and one that is stuck look
+    /// the same on a percentage; this tells them apart.
+    private(set) var lastMoved = Date()
     private(set) var ejectMessage: String?
     private(set) var ejected = false
 
@@ -464,6 +467,7 @@ final class Ingest {
         doneRate = 0
         remaining = nil
         lastSample = nil
+        lastMoved = .now
         ejectMessage = nil
         ejected = false
         // The screen may sleep; the Mac may not, and quitting is refused.
@@ -495,6 +499,7 @@ final class Ingest {
 
     private func advance(_ state: BackupProgress) {
         guard isCopying else { return }
+        if state.done != progress.done || state.filesDone != progress.filesDone { lastMoved = .now }
         progress = state
         let now = Date()
         if let last = lastSample {
@@ -525,11 +530,29 @@ final class Ingest {
             return
         }
         phase = .finished(report)
+        remember(report)
         refreshDrives()
         notify(report)
         if report.succeeded, settings.ejectWhenDone, !ejectableCards.isEmpty {
             Task { await ejectCards() }
         }
+    }
+
+    /// Keeps the pace of a backup long enough to say something, for the next
+    /// night's estimate. Small ones are all overhead and would promise too
+    /// much; the drives' count is part of it, since each is read back.
+    private func remember(_ report: BackupReport) {
+        let seconds = report.finished.timeIntervalSince(report.started)
+        guard report.succeeded, report.bytesCopied >= 256 << 20, seconds > 5 else { return }
+        let moved = Double(report.bytesCopied) * Double(1 + runningPlan.drives.count)
+        settings.measuredThroughput = moved / seconds
+    }
+
+    /// How long the plan on screen should take, from the last backup's pace.
+    var estimatedDuration: TimeInterval? {
+        guard settings.measuredThroughput > 0, plan.bytesToCopy > 0 else { return nil }
+        let moved = Double(plan.bytesToCopy) * Double(1 + max(onlineDrives.count, 1))
+        return moved / settings.measuredThroughput
     }
 
     private func notify(_ report: BackupReport) {
