@@ -73,6 +73,16 @@ struct IngestPlan: Sendable {
     }
     var leftOutCount: Int { groups.reduce(0) { $0 + $1.leftOut.count } }
     var days: [ShootDay] { Array(Set(toCopy.map(\.day))).sorted() }
+
+    /// FAT32 keeps a file's size in 32 bits: one byte short of 4 GiB is the
+    /// most it can hold. A clip over that fails mid-night with `EFBIG`, and
+    /// that stops the whole backup.
+    static let fatLimit: Int64 = 0xFFFF_FFFF
+
+    /// The first file too big for a FAT32 drive, to be said before ⌘↩.
+    var tooBigForFAT: PlannedFile? {
+        toCopy.lazy.flatMap(\.files).first { $0.file.size > Self.fatLimit }
+    }
 }
 
 /// What is already on a drive, in one shoot's folder.

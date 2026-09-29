@@ -37,6 +37,8 @@ final class Ingest {
         var available: Int64?
         var total: Int64?
         var isOnline: Bool
+        /// `msdos` is FAT32, which cannot hold a file of 4 GB.
+        var fileSystem: String?
         var id: String { url.path }
     }
 
@@ -280,7 +282,8 @@ final class Ingest {
                 name: name,
                 available: online ? VolumeWatcher.availableBytes(at: url) : nil,
                 total: online ? VolumeWatcher.totalBytes(at: url) : nil,
-                isOnline: online
+                isOnline: online,
+                fileSystem: online ? VolumeWatcher.fileSystem(of: url) : nil
             )
         }
     }
@@ -352,6 +355,11 @@ final class Ingest {
             let needed = plan.bytesToCopy + max(64 << 20, plan.bytesToCopy / 100)
             if let free = drive.available, free < needed {
                 reasons.append("Pas assez de place sur « \(drive.name) » : il manque \(Format.bytes(needed - free)).")
+            }
+        }
+        if let big = plan.tooBigForFAT {
+            for drive in onlineDrives where drive.fileSystem == "msdos" {
+                reasons.append("« \(drive.name) » est en FAT32, qui ne peut pas recevoir « \(big.name) » (\(Format.bytes(big.file.size))) : il faut un disque en exFAT ou APFS.")
             }
         }
         // Two folders on one disk are one copy, however they are named. Saying

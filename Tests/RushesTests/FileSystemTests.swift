@@ -147,4 +147,36 @@ struct FileSystemTests {
         _ = try Copier.copy(source, to: [target], modified: Date(), created: Date(), isCancelled: { false }) { _, _ in }
         #expect(try Data(contentsOf: target) == data)
     }
+
+    /// FAT32 cannot hold a file of 4 GB; the night used to find out at the
+    /// first long clip, and stop there.
+    @Test("a FAT32 drive is recognised, and a clip over 4 GB is found before ⌘↩")
+    func fat32IsToldApart() throws {
+        if let volume = TestVolume("MS-DOS FAT32", megabytes: 64) {
+            #expect(VolumeWatcher.fileSystem(of: volume.mountPoint) == "msdos")
+        }
+        if let volume = TestVolume("ExFAT") {
+            #expect(VolumeWatcher.fileSystem(of: volume.mountPoint) == "exfat")
+        }
+
+        let box = try Sandbox()
+        let card = try box.folder("CARD")
+        let clip = card.appendingPathComponent("PRIVATE/M4ROOT/CLIP/C0001.MP4")
+        try FileManager.default.createDirectory(at: clip.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: clip.path, contents: nil)
+        // Sparse: four gigabytes that take no room.
+        #expect(truncate(clip.path, off_t(Int64(1) << 32)) == 0)
+        try box.write("DCIM/100MSDCF/DSC00001.ARW", in: card, size: 1_000, date: Date())
+
+        let scan = try CardScanner.scan(card)
+        var settings = IngestSettings()
+        settings.initials = "SR"
+        settings.client = "Kaffi"
+        settings.project = "Lexus"
+        let plan = Planner.plan(
+            sources: [PlanSource(id: card.path, volumeName: "CARD", cameraLabel: "A", groups: scan.groups)],
+            settings: settings, fixedDay: nil, drives: [try box.folder("SSD")]
+        )
+        #expect(plan.tooBigForFAT?.file.name == "C0001.MP4")
+    }
 }

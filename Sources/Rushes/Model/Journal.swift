@@ -135,8 +135,11 @@ extension Bundle {
 
 struct JournalError: LocalizedError {
     let path: String
+    /// Read the moment the call failed: by the time the message is shown,
+    /// `errno` belongs to whatever ran since.
+    var code: Int32 = errno
     var errorDescription: String? {
-        "Le journal n'a pas pu être écrit (\(String(cString: strerror(errno)))) : \((path as NSString).lastPathComponent)"
+        "Le journal n'a pas pu être écrit (\(String(cString: strerror(code)))) : \((path as NSString).lastPathComponent)"
     }
 }
 
