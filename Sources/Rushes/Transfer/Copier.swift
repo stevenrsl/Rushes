@@ -177,7 +177,9 @@ enum Copier {
         while count > 0 {
             if isCancelled() { throw CancellationError() }
             let group = DispatchGroup()
-            let chunk = UnsafeRawBufferPointer(start: current, count: count)
+            // Shared with the writers for as long as `group.wait()` below: the
+            // buffer is not read into again until every write has returned.
+            nonisolated(unsafe) let chunk = UnsafeRawBufferPointer(start: current, count: count)
             for (fd, target) in zip(outputs, targets) {
                 queue.async(group: group) {
                     if !writeFully(fd, chunk) {
