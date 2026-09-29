@@ -12,10 +12,11 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ```bash
 ./build.sh                                          # release build → build/Rushes.app
 ./build.sh debug
-swift test --scratch-path /tmp/rushes-build         # 48 tests and a bench skipped unless asked
+swift test --scratch-path /tmp/rushes-build         # 97 tests; a bench and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
+RUSHES_SNAPSHOTS=/tmp/snaps swift test --scratch-path /tmp/rushes-build --filter SnapshotTests  # pages as PNG
 ```
 
 `swift test` and `swift build` need `--scratch-path` outside Documents: the folder is synced,
@@ -44,29 +45,45 @@ cancel, full disk) leaves no file that looks finished.
 **A card is told whether it may be formatted, one card at a time.** At the end of a backup each
 card gets a verdict (`Verdicts.of`): formatable when every ticked file of that card was copied
 and verified, "à vérifier" when something is on it that nobody could have ticked (a file of a
-kind Rushes does not know), "ne pas formater" when a file failed, the card was read in part, a
-name was already taken, or the backup stopped before reaching the end of it. One card failing
-says nothing about the next. A card told "ne pas formater" is never ejected. Before any of this
-is shown, every drive is asked for `F_FULLFSYNC`: `fsync` only hands the bytes to the drive,
-which still holds them in its own cache. The sentence "tu peux formater" exists nowhere else,
-and never for all the cards at once.
+kind Rushes does not know, or a picture found hidden or in the camera's housekeeping), "ne pas
+formater" when a file failed, the card was read in part, a name was already taken, the backup
+stopped before reaching the end of it, or a drive would not confirm its writes. One card failing
+says nothing about the next. A card told "ne pas formater" is never ejected. The verdict is
+judged on the plan that ran (`runningPlan`), never on one made since; no plan is made while
+copying. Before any of this is shown, every drive is synced whole with
+`sync_volume_np(FULLSYNC | WAIT)`, falling back to `F_FULLFSYNC` (`Journal.flushDevice`): each
+copy was fsynced before it was named, and on exFAT the folder entries holding the names can sit
+in the Mac's cache for half a minute (council of 2026-09-28). The sentence "tu peux formater"
+exists nowhere else, and never for all the cards at once.
 
 **Verified means read back from the drive.** The card is read once in 8 MB chunks; each chunk
 is hashed (XXH64) and written to every drive in parallel while the next is read. Each drive's
-copy is then read again and hashed. Reads and writes use `F_NOCACHE`: reading back from memory
-would prove nothing. Measured 2026-09-21 on the internal SSD: XXH64 at ~24 GB/s, 2 GB copied to
-two folders and checked in 2.8 s, so the card reader is always the limit.
+copy is then read again and hashed, one drive after the other. Reads and writes use
+`F_NOCACHE`: reading back from memory would prove nothing. The bytes read from the card must
+equal the size the scan saw: a reader that gives up says "end of file", and a copy of what it
+gave would check out against itself. A copy is named on every drive or on none. Measured
+2026-09-21 on the internal SSD: XXH64 at ~24 GB/s, 2 GB copied to two folders and checked in
+2.8 s. Reading the drives back in parallel was tried on 2026-09-29 and was two to three times
+slower on one SSD; on two separate hard drives the read-back, not the card, may be the limit,
+which only real drives can settle.
 
 **The drive keeps the history, not the Mac.** Each backup writes `_RUSHES/<yyMMdd-HHmmss>.json`
 and `.csv` in the shoot's folder on every drive: card path, new path, size, xxh64, fingerprint.
+Beside them, `rapport-<stamp>.html` is the same night for a person: each card's verdict and
+every file with its camera name, self-contained, printable (`TransferReport`, written by
+`Ingest` once the verdicts are known). With the setting on, an ASC MHL generation goes into the
+shoot's `ascmhl/` folder, the standard's place, sealed in `ascmhl_chain.xml` by C4 (`ASCMHL`,
+checked against the ascmitc/mhl XSDs and example chain).
 It is the only place the camera's names survive the renaming ("the client wants DSC01234"), and
 it travels with the folder when the shoot is archived. There is no database.
 
 Beside it, `_RUSHES/journal.jsonl` at the **drive's root** holds one line per file, appended and
 flushed the moment that file is verified, between a `start` and an `end` line per backup
 (`Journal`, `DriveJournal`). The manifests are written when a backup ends, which is too late for
-three questions: what survived a backup that never ended (a `start` with no `end` is resumed,
-and skipping is forced for what it verified, whatever the setting says); where a shot went
+three questions: what survived a backup that never ended (a `start` with no `end`, or an `end`
+with `complete: false`, not followed by a complete backup, is resumed, and skipping is forced
+for what it verified, whatever the setting says; before 2026-09-28 one failed file forced it
+for good); where a shot went
 whatever it was filed under (rename the client and yesterday's card is still recognised, and
 stays in yesterday's folder); and which numbers are already spoken for (sort out some rejects or
 empty the drive, and those numbers are still not handed out twice). It is derived: every line is
@@ -88,6 +105,12 @@ with the reason. A folder the Mac refuses to open is named too: that card was no
 so it is never ejected and the pages say so, but it does not hold the backup back, because
 rushes that can be saved tonight are saved tonight.
 
+**The drive can be asked again, months later.** File › Vérifier un disque (`Audit`,
+`AuditView`) walks a drive or a shoot folder for its `_RUSHES/*.json`, reads every listed file
+back around the cache and names what is gone, resized or reads differently, with the camera
+name to look for. It only ever reads. Manifests, not the journal: an archived shoot keeps the
+first and leaves the second behind.
+
 ## Layout
 
 ```
@@ -95,25 +118,34 @@ Sources/Rushes/
   Model/      MediaFile (roles, extensions per brand), Grouping (DCF objects), CardScanner
               (+ CameraBrand), CaptureDates (EXIF via ImageIO), Cameras (identity, letters),
               Naming (ShootDay, NameTemplate, presets, Sanitize, FolderLayout), Settings,
-              Plan (Planner, DestinationIndex), History, Journal (per-drive record)
+              Plan (Planner, DestinationIndex), History, Journal (per-drive record), Verdict,
+              Readiness (what holds ⌘↩), Report (the HTML page), MHL (ASC MHL v2)
   Transfer/   XXHash64, Copier (one file, every drive, checked), Backup (a whole plan +
-              manifests), Volumes (mount watching, free space, eject)
+              manifests), Audit (a drive read back against its records), Volumes (mount
+              watching, free space, file system, eject)
   App/        RushesApp (+ AppDelegate: quitting mid-backup is asked), Ingest (the observable
               model: cards, drives, plan, backup, notifications, sleep assertion)
   Design/     Palette (Cairn's tokens, forest in pastel, TypeScale, Radius), Components (Cairn's
               page frame, PageTrail, PageSection, Field, chips, accent buttons, checkbox)
   Views/      RootView (+ PrepareView, ActionBar), CardsColumn, PreparePanels (shoot, drives,
-              naming blocks), PreviewTable, TransferViews (copying, done), SettingsView (tabs)
-Tests/        Swift Testing: hash (vectors + zstd), grouping per brand, naming, planner, backup,
-              camera letters
+              naming blocks), PreviewTable, TransferViews (copying, done), SettingsView (tabs),
+              AuditView (+ AuditModel, its own window)
+Tests/        Swift Testing: hash, grouping per brand, naming, planner, backup, copier edges,
+              scanner, journal, verdicts, readiness, report, audit, ASC MHL, file systems
+              (hdiutil exFAT/FAT32 images), camera letters
 Tools/        make-icon.swift, make-test-card.swift
 ```
 
 ## Cards and brands
 
 The scanner walks the whole card and classifies by extension, so a camera nobody listed still
-works. Hidden files and the cameras' housekeeping folders (MISC, AVF_INFO, DATABASE, CANONMSC,
-GENERAL, CLIPINF, PLAYLIST…) are skipped. A mounted volume is a card when it has DCIM, XDROOT,
+works. The Mac's dot files are skipped. The cameras' housekeeping folders (MISC, AVF_INFO,
+DATABASE, CANONMSC, GENERAL, CLIPINF, PLAYLIST, BACKUP…) and files flagged hidden (the DOS
+attribute on FAT and exFAT) are walked but never copied: a picture, clip or sound found there is
+listed (`setAside`) and makes the card "à vérifier"; previews (THM, THMBNL, caches) are not
+counted. Until 2026-09-28 they were skipped outright, and a card could be called formatable with
+pictures the scan never saw. A file whose attributes will not read makes the card one read in
+part. A mounted volume is a card when it has DCIM, XDROOT,
 CONTENTS, PRIVATE/M4ROOT|AVCHD|XDROOT, or BRAW/R3D at its root. Anything else can be added by
 hand ("Ajouter un dossier…").
 
@@ -243,7 +275,11 @@ for both to be current: a project typed a second before ⌘↩ used to be copied
 before it, and a drive plugged in at the last moment used to receive a plan that had never
 looked at it. The action bar also holds back a name whose `.rushes-partial` would be too long
 for the drive, two destination folders that turn out to be one disk, and a disk without a
-margin over the bytes to copy. What it cannot hold back it says anyway, in the same line.
+margin over the bytes to copy, and a FAT32 drive when a clip is over 4 GB (`EFBIG` would stop
+the night). What it cannot hold back it says anyway, in the same line. These rules are
+`Readiness`, a plain value with a test per rule. The page also says when the backup should end
+("fini vers 04:10"), from the pace of the last backup worth measuring
+(`settings.measuredThroughput`).
 
 ## At night
 
@@ -253,7 +289,8 @@ verified are ejected, the others never. Quitting mid-backup asks, then stops the
 for the record to be written. What was verified before a cancel, a failure, a quit or a crash is
 in the journal, so "Reprendre" copies only the rest, even with "Ignorer ce qui est déjà
 sauvegardé" off and even after the app was killed. A card left unticked does not hold the button
-while it is read. Appearance can be forced dark in Settings
+while it is read. Twenty seconds without a byte moving is said on the copying page: a stuck
+copy and a slow one look the same on a percentage. Appearance can be forced dark in Settings
 (Copie tab).
 
 The first launch asks for removable volumes access (`NSRemovableVolumesUsageDescription`); the
@@ -264,7 +301,8 @@ ad-hoc signature means every rebuild asks again, as Cairn's microphone does.
 - **A camera plugged by USB.** Only mounted volumes are read: a card reader, or a camera in
   mass-storage mode. Canon bodies (and iPhones) speak PTP only, which needs ImageCaptureCore,
   is several times slower than a reader and hides Sony's XML. A reader is the recommendation.
-- An ASC MHL file beside the JSON manifest, for DITs and post houses.
+- Trying the ASC MHL with the `ascmhl` tool itself (`ascmhl verify`); only the schemas were
+  checked.
 - An option to keep an untouched dump of the card's structure next to the renamed files, for
   spanned clips (AVCHD, XF-AVC across cards) that editing software rebuilds from the structure.
 - Opening by itself when a card is inserted (a login item watching mounts).
