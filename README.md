@@ -120,7 +120,7 @@ Les rushes déjà copiés et les relevés restent sur les disques, évidemment.
 
 ```bash
 ./build.sh debug                                    # build de débogage
-swift test --scratch-path /tmp/rushes-build         # 97 tests
+swift test --scratch-path /tmp/rushes-build         # 98 tests
 swift Tools/make-icon.swift "$(pwd)"                # redessine l'icône
 ```
 

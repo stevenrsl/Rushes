@@ -12,7 +12,7 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ```bash
 ./build.sh                                          # release build → build/Rushes.app
 ./build.sh debug
-swift test --scratch-path /tmp/rushes-build         # 97 tests; a bench and snapshots skipped unless asked
+swift test --scratch-path /tmp/rushes-build         # 98 tests; a bench and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
