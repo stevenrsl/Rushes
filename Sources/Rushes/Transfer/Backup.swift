@@ -98,6 +98,7 @@ enum Backup {
                     let hash = try Copier.copy(
                         planned.file.url,
                         to: targets,
+                        size: planned.file.size,
                         modified: planned.file.modified,
                         created: planned.file.created,
                         isCancelled: isCancelled

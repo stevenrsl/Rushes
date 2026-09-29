@@ -30,13 +30,16 @@ enum Copier {
 
     /// Copies `source` to each of `targets` and checks every copy.
     /// `advance` is called with bytes read from the card, then with bytes read
-    /// back from the drives (`true`). Returns the XXH64 of the file.
+    /// back from the drives (`true`). `size` is what the scan saw: a
+    /// card that hands back fewer bytes, or more, is not believed. Returns the
+    /// XXH64 of the file.
     static func copy(
         _ source: URL,
         to targets: [URL],
+        size: Int64? = nil,
         modified: Date,
         created: Date,
-        isCancelled: @escaping () -> Bool,
+        isCancelled: @escaping @Sendable () -> Bool,
         advance: (Int64, Bool) -> Void
     ) throws -> String {
         let partials = targets.map(partialURL(for:))
@@ -67,7 +70,16 @@ enum Copier {
             outputs.append(fd)
         }
 
-        let hash = try stream(from: input, to: outputs, source: source, targets: targets, isCancelled: isCancelled) { advance($0, false) }
+        var read: Int64 = 0
+        let hash = try stream(from: input, to: outputs, source: source, targets: targets, isCancelled: isCancelled) {
+            read += $0
+            advance($0, false)
+        }
+        // A reader that gives up early says "end of file", and a copy of what
+        // it did give would check out perfectly against itself.
+        if let size, read != size {
+            throw Failure(message: "La carte a rendu \(read) octets de « \(source.lastPathComponent) » au lieu de \(size) : le lecteur ou la carte a peut-être un problème.")
+        }
 
         for (fd, partial) in zip(outputs, partials) {
             guard fsync(fd) == 0 else { throw posix(errno, "Écriture incomplète sur \(volumeName(of: partial))") }
@@ -75,6 +87,9 @@ enum Copier {
         for fd in outputs { close(fd) }
         outputs.removeAll()
 
+        // One drive after the other. Reading both at once was tried
+        // (2026-09-29) and was two to three times slower on one SSD; on two
+        // separate disks it may win, which only real drives can tell.
         for (partial, target) in zip(partials, targets) {
             let check = try readHash(of: partial, isCancelled: isCancelled) { advance($0, true) }
             guard check == hash else {
@@ -82,9 +97,19 @@ enum Copier {
             }
         }
 
-        for (partial, target) in zip(partials, targets) {
-            try? FileManager.default.setAttributes([.modificationDate: modified, .creationDate: created], ofItemAtPath: partial.path)
-            try name(partial, target)
+        // Named on every drive, or on none: a name given on the first drive
+        // and refused on the second would leave a finished file outside any
+        // record, and the shot copied again under another number tomorrow.
+        var named: [URL] = []
+        do {
+            for (partial, target) in zip(partials, targets) {
+                try? FileManager.default.setAttributes([.modificationDate: modified, .creationDate: created], ofItemAtPath: partial.path)
+                try name(partial, target)
+                named.append(target)
+            }
+        } catch {
+            for target in named { unlink(target.path) }
+            throw error
         }
         succeeded = true
         return hex(hash)
@@ -103,7 +128,9 @@ enum Copier {
         if renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 { return }
         let code = errno
         if code == EEXIST { throw appeared(target) }
-        guard code == ENOTSUP else { throw posix(code, "Impossible de nommer « \(target.lastPathComponent) »") }
+        // Some network and FUSE file systems say EINVAL or ENOSYS for the
+        // flag they do not know.
+        guard [ENOTSUP, EINVAL, ENOSYS].contains(code) else { throw posix(code, "Impossible de nommer « \(target.lastPathComponent) »") }
 
         let reserved = open(target.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
         guard reserved >= 0 else {
