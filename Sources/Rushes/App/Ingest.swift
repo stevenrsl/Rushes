@@ -39,6 +39,9 @@ final class Ingest {
         var isOnline: Bool
         /// `msdos` is FAT32, which cannot hold a file of 4 GB.
         var fileSystem: String?
+        /// The volume it sits on, read with the drives rather than at every
+        /// redraw: two folders on one volume are one copy.
+        var volume: String
         var id: String { url.path }
     }
 
@@ -286,7 +289,8 @@ final class Ingest {
                 available: online ? VolumeWatcher.availableBytes(at: url) : nil,
                 total: online ? VolumeWatcher.totalBytes(at: url) : nil,
                 isOnline: online,
-                fileSystem: online ? VolumeWatcher.fileSystem(of: url) : nil
+                fileSystem: online ? VolumeWatcher.fileSystem(of: url) : nil,
+                volume: volume?.path ?? path
             )
         }
     }
@@ -336,62 +340,16 @@ final class Ingest {
 
     /// Why the button is not ready, the most useful first.
     var blockers: [String] {
-        var reasons: [String] = []
-        let template = NameTemplate(settings.namePattern)
-        if cards.isEmpty { reasons.append("Insère une carte ou ajoute un dossier.") }
-        else if isScanning { reasons.append("Lecture des cartes en cours…") }
-        else if isPlanning || !isCurrent { reasons.append("Préparation de l'aperçu…") }
-        else if readyCards.isEmpty { reasons.append("Aucune carte sélectionnée.") }
-        if drives.isEmpty { reasons.append("Choisis un disque de destination.") }
-        for drive in drives where !drive.isOnline { reasons.append("« \(drive.name) » n'est pas branché.") }
-        let missing: [(NameToken, String)] = [(.initials, settings.initials), (.client, settings.client), (.project, settings.project)]
-        for (token, value) in missing where template.uses(token) || NameTemplate(settings.folderPattern).uses(token) || settings.layout.uses(token) {
-            if Sanitize.field(value).isEmpty { reasons.append("Il manque \(token == .initials ? "tes initiales" : token == .client ? "le client" : "le projet").") }
-        }
-        if template.uses(.camera) || settings.layout.uses(.camera), readyCards.contains(where: { $0.cameraLabel.isEmpty }) { reasons.append("Une carte n'a pas de lettre de caméra.") }
-        if !template.isUnique { reasons.append("Le modèle doit contenir {NUM} ou {ORIG}, sinon deux photos auraient le même nom.") }
-        if !plan.conflicts.isEmpty { reasons.append("\(plan.conflicts.count) nom\(plan.conflicts.count > 1 ? "s" : "") déjà pris : rien ne sera remplacé.") }
-        for drive in onlineDrives {
-            // With a margin: a disk filled to its last byte fails in the middle
-            // of the night, and the folders, the manifests and exFAT's large
-            // clusters all take a little more than the files themselves.
-            let needed = plan.bytesToCopy + max(64 << 20, plan.bytesToCopy / 100)
-            if let free = drive.available, free < needed {
-                reasons.append("Pas assez de place sur « \(drive.name) » : il manque \(Format.bytes(needed - free)).")
-            }
-        }
-        if let big = plan.tooBigForFAT {
-            for drive in onlineDrives where drive.fileSystem == "msdos" {
-                reasons.append("« \(drive.name) » est en FAT32, qui ne peut pas recevoir « \(big.name) » (\(Format.bytes(big.file.size))) : il faut un disque en exFAT ou APFS.")
-            }
-        }
-        // Two folders on one disk are one copy, however they are named. Saying
-        // "sur deux disques" then would be the one lie that matters.
-        var volumes: [String: String] = [:]
-        for drive in onlineDrives {
-            let volume = VolumeWatcher.volume(of: drive.url)?.path ?? drive.url.path
-            if let first = volumes[volume], first != drive.name {
-                reasons.append("« \(first) » et « \(drive.name) » sont sur le même disque : ce ne serait qu'une seule copie.")
-            } else if volumes[volume] == nil {
-                volumes[volume] = drive.name
-            }
-        }
-        // The copy in progress is named `.<name>.rushes-partial`, sixteen
-        // characters longer: a name the drive would accept, but its partial
-        // not, fails file by file all night.
-        if let long = plan.toCopy.flatMap(\.files).first(where: { $0.name.utf8.count + 16 > 255 }) {
-            reasons.append("« \(long.name) » est trop long pour être écrit : raccourcis le modèle de nom.")
-        }
-        if reasons.isEmpty, plan.toCopy.isEmpty, !plan.groups.isEmpty {
-            if plan.unticked == plan.groups.count {
-                reasons.append("Aucun type de fichier coché dans Fichiers.")
-            } else if plan.unticked > 0 {
-                reasons.append("Rien de nouveau parmi les types cochés.")
-            } else {
-                reasons.append("Tout est déjà sauvegardé sur chaque disque.")
-            }
-        }
-        return reasons
+        Readiness(
+            cards: cards.count,
+            scanning: isScanning,
+            planning: isPlanning || !isCurrent,
+            ready: readyCards.count,
+            cardWithoutLetter: readyCards.contains { $0.cameraLabel.isEmpty },
+            drives: drives.map { .init(name: $0.name, isOnline: $0.isOnline, available: $0.available, fileSystem: $0.fileSystem, volume: $0.volume) },
+            settings: settings,
+            plan: plan
+        ).blockers
     }
 
     /// What this backup will not cover, said before it runs rather than found
