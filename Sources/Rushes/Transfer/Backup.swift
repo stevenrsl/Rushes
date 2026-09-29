@@ -173,6 +173,13 @@ enum Backup {
                 } catch {
                     report.failures.append(.init(file: History.folderName, message: "Le relevé n'a pas pu être écrit sur \(drive.lastPathComponent) : \(error.localizedDescription)"))
                 }
+                if plan.writesMHL {
+                    do {
+                        try ASCMHL.write(list, in: shoot, at: now, version: Bundle.main.version)
+                    } catch {
+                        report.failures.append(.init(file: ASCMHL.folderName, message: "L'ASC MHL n'a pas pu être écrit sur \(drive.lastPathComponent) : \(error.localizedDescription)"))
+                    }
+                }
             }
         }
         // The closing line comes last and says whether anything was left

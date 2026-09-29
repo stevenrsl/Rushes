@@ -322,6 +322,7 @@ final class Ingest {
                 plan.drives = drives.map(\.path)
                 plan.generation = generation
                 plan.namePattern = settings.namePattern
+                plan.writesMHL = settings.writeMHL
                 return plan
             }()
             guard !Task.isCancelled else { return }

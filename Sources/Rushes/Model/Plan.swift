@@ -56,6 +56,8 @@ struct IngestPlan: Sendable {
     /// The name pattern it used, written into the journal so a folder can be
     /// explained months later.
     var namePattern = ""
+    /// Whether each shoot folder gets its ASC MHL generation.
+    var writesMHL = false
     /// The drives this plan was made for, and the change it was made from: a
     /// plan is only ever run against the drives it counted, and never while a
     /// newer one is being made. A name typed a second before ⌘↩ would
