@@ -5,6 +5,7 @@ import SwiftUI
 struct RushesApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @State private var ingest = Ingest()
+    @State private var audit = AuditModel()
 
     var body: some Scene {
         Window("Rushes", id: "main") {
@@ -15,14 +16,33 @@ struct RushesApp: App {
         }
         .defaultSize(width: 1180, height: 820)
         .commands {
-            CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .newItem) {
+                AuditCommand()
+            }
         }
+
+        Window("Vérifier un disque", id: "audit") {
+            AuditView()
+                .environment(audit)
+                .preferredColorScheme(ingest.settings.appearance.scheme)
+        }
+        .defaultSize(width: 900, height: 680)
 
         Settings {
             SettingsView()
                 .environment(ingest)
                 .preferredColorScheme(ingest.settings.appearance.scheme)
         }
+    }
+}
+
+/// Months later, before the other copy is wiped: File › Vérifier un disque.
+private struct AuditCommand: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Vérifier un disque…") { openWindow(id: "audit") }
+            .keyboardShortcut("v", modifiers: [.command, .shift])
     }
 }
 

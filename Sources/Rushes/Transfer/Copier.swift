@@ -220,6 +220,11 @@ enum Copier {
         hex(try readHash(of: url, isCancelled: { false }, advance: { _ in }))
     }
 
+    /// The same, around the Mac's cache, with progress and a way to stop.
+    static func hash(of url: URL, isCancelled: () -> Bool, advance: (Int64) -> Void) throws -> String {
+        hex(try readHash(of: url, isCancelled: isCancelled, advance: advance))
+    }
+
     private static func readFully(_ fd: Int32, into buffer: UnsafeMutableRawPointer, from url: URL) throws -> Int {
         var filled = 0
         while filled < chunkSize {
