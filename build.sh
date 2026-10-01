@@ -28,8 +28,11 @@ case "$MODE" in
 esac
 
 # The version lives in Support/Info.plist and nowhere else: the About window
-# reads it from the bundle, the update check too, and the .dmg is named by it.
+# reads it from the bundle, the update check too, and the .dmg is named by it,
+# as the release is tagged: 0.3.0 and RushesPrerelease beta.1 → 0.3.0-beta.1.
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Support/Info.plist)"
+PRERELEASE="$(/usr/libexec/PlistBuddy -c 'Print :RushesPrerelease' Support/Info.plist 2>/dev/null || true)"
+if [ -n "$PRERELEASE" ]; then VERSION="$VERSION-$PRERELEASE"; fi
 
 if [ "$SIGNED" = 1 ]; then
   IDENTITY="${RUSHES_SIGN_IDENTITY:-}"
