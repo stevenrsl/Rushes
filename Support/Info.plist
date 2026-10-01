@@ -24,6 +24,8 @@
     <array>
         <string>fr</string>
     </array>
+    <key>NSHumanReadableCopyright</key>
+    <string>© 2026 stevenrsl. Logiciel libre sous licence GPL-3.0.</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.photography</string>
     <key>LSMinimumSystemVersion</key>

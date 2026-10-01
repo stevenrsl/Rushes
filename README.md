@@ -131,3 +131,13 @@ et `codesign` les refuse. `build.sh` s'en occupe tout seul.
 `CLAUDE.md` décrit le fonctionnement en détail : le regroupement des prises par la norme DCF,
 les modèles de noms, les lettres de caméra, ce que fait le moteur de copie, et les décisions
 prises en chemin.
+
+## Licence
+
+Rushes est un logiciel libre, sous [licence publique générale GNU, version 3](LICENSE)
+(GPL-3.0). Tu peux l'utiliser, l'étudier, le modifier et le redistribuer, y compris modifié.
+Celui qui redistribue Rushes ou un logiciel qui en reprend le code doit le faire sous la même
+licence, avec son code source : personne ne peut en faire une app fermée sous un autre nom.
+
+Tout le code est écrit pour Rushes, sans dépendance. L'empreinte XXH64 est écrite d'après sa
+spécification publique, pas reprise de la bibliothèque de référence.
