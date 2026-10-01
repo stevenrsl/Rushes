@@ -116,11 +116,18 @@ defaults delete eu.stevenrsl.rushes
 
 Les rushes déjà copiés et les relevés restent sur les disques, évidemment.
 
+## Bêta
+
+Rushes est en bêta. Si tu la testes, lis d'abord [la page des testeurs](docs/testeurs.md)
+([in English](docs/testers.md)) : garde ta méthode de sauvegarde habituelle en parallèle, et
+pour tout retour, Aide › Décrire une carte… puis Aide › Signaler un problème…, ou un e-mail à
+[rushes@stevenrsl.eu](mailto:rushes@stevenrsl.eu).
+
 ## Développer
 
 ```bash
 ./build.sh debug                                    # build de débogage
-swift test --scratch-path /tmp/rushes-build         # 98 tests
+swift test --scratch-path /tmp/rushes-build         # 101 tests
 swift Tools/make-icon.swift "$(pwd)"                # redessine l'icône
 ```
 

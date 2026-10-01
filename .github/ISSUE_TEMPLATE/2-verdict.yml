@@ -1,0 +1,39 @@
+name: Le verdict m'a surpris / The verdict surprised me
+description: Une carte dite « à vérifier » ou « ne pas formater » sans raison claire, ou l'inverse. / A card called "à vérifier" or "ne pas formater" for no clear reason, or the opposite.
+title: "Verdict : "
+labels: [verdict]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ne formate pas cette carte avant d'avoir sauvegardé autrement. Joins le diagnostic (Aide › Décrire une carte…) et, si tu veux bien, le rapport de la nuit : `_RUSHES/rapport-….html` dans le dossier du tournage. Le rapport contient les noms de client et de projet que tu as tapés.
+        Do not format this card until it is backed up another way. Attach the diagnostic (Aide › Décrire une carte…) and, if you are happy to, the night's report: `_RUSHES/rapport-….html` in the shoot's folder. The report holds the client and project names you typed.
+  - type: dropdown
+    id: verdict
+    attributes:
+      label: Le verdict de la carte / The card's verdict
+      options:
+        - Formatable
+        - À vérifier
+        - Ne pas formater
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Ce que tu attendais, et pourquoi / What you expected, and why
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Boîtier / Camera
+  - type: textarea
+    id: files
+    attributes:
+      label: Diagnostic et rapport / Diagnostic and report
+      description: Glisse les fichiers ici. / Drop the files here.
+  - type: input
+    id: version
+    attributes:
+      label: Version de Rushes et de macOS / Rushes and macOS version
