@@ -19,6 +19,7 @@ struct RushesApp: App {
             CommandGroup(replacing: .newItem) {
                 AuditCommand()
             }
+            HelpCommands(ingest: ingest)
         }
 
         Window("Vérifier un disque", id: "audit") {
