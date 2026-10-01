@@ -119,7 +119,8 @@ Les rushes déjà copiés et les relevés restent sur les disques, évidemment.
 ## Soutenir
 
 Rushes est gratuite. Si elle t'épargne des nuits, tu peux la soutenir sur
-[GitHub Sponsors](https://github.com/sponsors/stevenrsl).
+[GitHub Sponsors](https://github.com/sponsors/stevenrsl) ou sur
+[Ko-fi](https://ko-fi.com/stevenrsl).
 
 ## Développer
 
