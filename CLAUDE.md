@@ -310,7 +310,9 @@ background (2026-10-01). Distribution is direct, never the Mac App Store, whose 
 turn the cards' detection into an open panel per card: `build.sh release-signed` signs with
 the hardened runtime from `RUSHES_SIGN_IDENTITY`, notarises and staples the app then the
 `.dmg` with `RUSHES_NOTARY_PROFILE`, and asks Gatekeeper about a quarantined copy. The version
-lives in `Support/Info.plist` only.
+lives in `Support/Info.plist` only: `CFBundleShortVersionString` in digits (macOS wants them),
+`RushesPrerelease` for the rest (`beta.1`, empty once public), joined by `Bundle.version` as
+the release is tagged (`v0.3.0-beta.1`, decided 2026-10-01).
 
 The first launch asks for removable volumes access (`NSRemovableVolumesUsageDescription`); the
 ad-hoc signature means every rebuild asks again, as Cairn's microphone does.

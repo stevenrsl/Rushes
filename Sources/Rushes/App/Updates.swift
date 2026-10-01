@@ -43,13 +43,9 @@ enum UpdateCheck {
         return newest.version > current ? .newer(newest) : .upToDate
     }
 
-    static var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
-    }
-
     @MainActor
     static func run() async {
-        let current = currentVersion
+        let current = Bundle.main.version
         var request = URLRequest(url: releasesURL, timeoutInterval: 15)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Rushes/\(current)", forHTTPHeaderField: "User-Agent")

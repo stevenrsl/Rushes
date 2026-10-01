@@ -128,8 +128,15 @@ enum Journal {
 extension Bundle {
     /// What wrote a line, so a folder made by an older Rushes can be told
     /// apart from one made today. "0" under `swift test`, which has no bundle.
+    ///
+    /// "0.3.0-beta.1", as the release is tagged: CFBundleShortVersionString
+    /// holds digits only, as macOS wants, and `RushesPrerelease` the rest,
+    /// empty for a public release. Both sit in Support/Info.plist, the
+    /// version's only place.
     var version: String {
-        (object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
+        let short = (object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
+        let pre = (object(forInfoDictionaryKey: "RushesPrerelease") as? String) ?? ""
+        return pre.isEmpty ? short : "\(short)-\(pre)"
     }
 }
 
