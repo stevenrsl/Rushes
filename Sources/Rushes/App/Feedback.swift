@@ -26,7 +26,7 @@ struct HelpCommands: Commands {
     }
 
     static var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        Bundle.main.version
     }
 }
 
