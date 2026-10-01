@@ -268,6 +268,11 @@ button, `.accentLink` for the rest, a drawn checkbox, the wash at the top, `late
 
 The icon is drawn from the same colours (`Tools/make-icon.swift`).
 
+**Support is asked in one place.** Rushes is free; the About window (`Support/Credits.rtf`), the
+README and `.github/FUNDING.yml` say how to support it (GitHub Sponsors, Ko-fi). Never on the
+preparation page nor while copying, and not on the done page during the beta (Steven,
+2026-10-01). The credits set no colour, so dark mode reads them.
+
 ## Before ⌘↩
 
 The plan carries the drives it counted and the change it was made from, and the button waits
