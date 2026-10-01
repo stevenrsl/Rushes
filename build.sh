@@ -74,6 +74,9 @@ cp Support/InfoPlist.strings "$STAGE/Contents/Resources/fr.lproj/InfoPlist.strin
 if [ -f Support/AppIcon.icns ]; then
   cp Support/AppIcon.icns "$STAGE/Contents/Resources/AppIcon.icns"
 fi
+# The About window shows Credits.rtf under the version by itself: the
+# licence, the code, and the one place Rushes asks for support.
+cp Support/Credits.rtf "$STAGE/Contents/Resources/Credits.rtf"
 
 # Copying carries extended attributes across from Support/, so the bundle is
 # cleaned first.
