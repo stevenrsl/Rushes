@@ -134,7 +134,8 @@ pour tout retour, Aide › Décrire une carte… puis Aide › Signaler un probl
 ## Soutenir
 
 Rushes est gratuite. Si elle t'épargne des nuits, tu peux la soutenir sur
-[GitHub Sponsors](https://github.com/sponsors/stevenrsl).
+[GitHub Sponsors](https://github.com/sponsors/stevenrsl) ou sur
+[Ko-fi](https://ko-fi.com/stevenrsl).
 
 ## Développer
 
