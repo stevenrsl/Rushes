@@ -15,7 +15,7 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ./build.sh                                          # release build → build/Rushes.app
 ./build.sh debug
 ./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
-swift test --scratch-path /tmp/rushes-build         # 102 tests; a bench and snapshots skipped unless asked
+swift test --scratch-path /tmp/rushes-build         # 105 tests; a bench and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
@@ -122,12 +122,14 @@ Sources/Rushes/
               (+ CameraBrand), CaptureDates (EXIF via ImageIO), Cameras (identity, letters),
               Naming (ShootDay, NameTemplate, presets, Sanitize, FolderLayout), Settings,
               Plan (Planner, DestinationIndex), History, Journal (per-drive record), Verdict,
-              Readiness (what holds ⌘↩), Report (the HTML page), MHL (ASC MHL v2)
+              Readiness (what holds ⌘↩), Report (the HTML page), MHL (ASC MHL v2),
+              Diagnostic (a card described for a beta tester to send)
   Transfer/   XXHash64, Copier (one file, every drive, checked), Backup (a whole plan +
               manifests), Audit (a drive read back against its records), Volumes (mount
               watching, free space, file system, eject)
   App/        RushesApp (+ AppDelegate: quitting mid-backup is asked), Ingest (the observable
-              model: cards, drives, plan, backup, notifications, sleep assertion)
+              model: cards, drives, plan, backup, notifications, sleep assertion), Feedback
+              (the Aide menu: describe a card, report a problem, write)
   Design/     Palette (Cairn's tokens, forest in pastel, TypeScale, Radius), Components (Cairn's
               page frame, PageTrail, PageSection, Field, chips, accent buttons, checkbox)
   Views/      RootView (+ PrepareView, ActionBar), CardsColumn, PreparePanels (shoot, drives,
@@ -311,6 +313,18 @@ lives in `Support/Info.plist` only.
 
 The first launch asks for removable volumes access (`NSRemovableVolumesUsageDescription`); the
 ad-hoc signature means every rebuild asks again, as Cairn's microphone does.
+
+## The beta
+
+Testers run bodies Steven does not own (worksheet of 2026-10-01). Aide › Décrire une carte…
+(`CardDiagnostic`, `CardDescription`) reads a card through the backup's own `CardScanner.scan`
+then `dated`, and writes JSON where the tester says, refused on the card itself: every entry
+with its size, dates, hidden flag and fate (`Fate`: the shot and role, or why it stays), the
+kinds and the tester's own choices, the EXIF models. Never an image byte, the volume's name or
+path, anything typed, or the serial (only `hasSerial`). The same menu opens GitHub's issue
+forms (`.github/ISSUE_TEMPLATE`: carte, verdict, autre) or mails rushes@stevenrsl.eu.
+`docs/testeurs.md` and `docs/testers.md` (with a glossary, the app being French only) say what
+is asked: three real nights, two drives, and their usual backup kept alongside.
 
 ## Not done yet
 

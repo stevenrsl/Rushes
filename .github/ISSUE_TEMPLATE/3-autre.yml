@@ -1,0 +1,14 @@
+name: Autre chose / Something else
+description: Une idée, une gêne, un texte pas clair. / An idea, an annoyance, an unclear sentence.
+labels: [retour]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Ton retour / Your feedback
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version de Rushes et de macOS / Rushes and macOS version
