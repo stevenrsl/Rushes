@@ -139,6 +139,7 @@ Tests/        Swift Testing: hash, grouping per brand, naming, planner, backup, 
               scanner, journal, verdicts, readiness, report, audit, ASC MHL, file systems
               (hdiutil exFAT/FAT32 images), camera letters
 Tools/        make-icon.swift, make-test-card.swift
+docs/         the council's notes (French), relecture.md (the guide for an outside review of the core)
 ```
 
 ## Cards and brands
