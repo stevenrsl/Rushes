@@ -169,7 +169,7 @@ extension CardDiagnostic {
         let version = ProcessInfo.processInfo.operatingSystemVersion
         return CardDiagnostic(
             made: stamp(now),
-            rushes: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?",
+            rushes: Bundle.main.version,
             macOS: "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
             timeZone: TimeZone.current.identifier,
             fileSystem: VolumeWatcher.fileSystem(of: scan.root),
