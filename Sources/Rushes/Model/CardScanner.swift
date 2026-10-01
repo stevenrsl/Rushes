@@ -219,6 +219,19 @@ enum CardScanner {
     }
 }
 
+extension CardScanner {
+    /// The scan with each photo's EXIF date, and the body the card came
+    /// from: the photos' EXIF, else Sony's clip XML, else the brand alone.
+    /// Reads the card again, so it runs off the main thread.
+    static func dated(_ scan: CardScan, progress: (@Sendable (Int) -> Void)? = nil) -> CardScan {
+        let (groups, fromPhotos) = CaptureDates.enrich(scan.groups, progress: progress)
+        let camera = fromPhotos
+            ?? CameraLetters.sonyDevice(in: scan.groups)
+            ?? (scan.brand == .unknown ? nil : CameraIdentity(name: scan.brand.rawValue, serial: nil))
+        return CardScan(root: scan.root, groups: groups, orphans: scan.orphans, unknown: scan.unknown, unreadableFolders: scan.unreadableFolders, brand: scan.brand, camera: camera, setAside: scan.setAside)
+    }
+}
+
 /// The folders the walker was refused, gathered from its own thread.
 private final class RefusedFolders: @unchecked Sendable {
     private let lock = NSLock()
