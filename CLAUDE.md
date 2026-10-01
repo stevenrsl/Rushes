@@ -14,7 +14,8 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ```bash
 ./build.sh                                          # release build → build/Rushes.app
 ./build.sh debug
-swift test --scratch-path /tmp/rushes-build         # 98 tests; a bench and snapshots skipped unless asked
+./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
+swift test --scratch-path /tmp/rushes-build         # 102 tests; a bench and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
@@ -294,6 +295,14 @@ sauvegardé" off and even after the app was killed. A card left unticked does no
 while it is read. Twenty seconds without a byte moving is said on the copying page: a stuck
 copy and a slow one look the same on a percentage. Appearance can be forced dark in Settings
 (Copie tab).
+
+Rushes touches the network once, when Rushes › Rechercher une mise à jour… is chosen
+(`UpdateCheck`): it reads GitHub's releases and says, nothing more. No telemetry, nothing in the
+background (2026-10-01). Distribution is direct, never the Mac App Store, whose sandbox would
+turn the cards' detection into an open panel per card: `build.sh release-signed` signs with
+the hardened runtime from `RUSHES_SIGN_IDENTITY`, notarises and staples the app then the
+`.dmg` with `RUSHES_NOTARY_PROFILE`, and asks Gatekeeper about a quarantined copy. The version
+lives in `Support/Info.plist` only.
 
 The first launch asks for removable volumes access (`NSRemovableVolumesUsageDescription`); the
 ad-hoc signature means every rebuild asks again, as Cairn's microphone does.
