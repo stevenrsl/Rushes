@@ -6,7 +6,9 @@ JPEG and video into folders, copies to one or two drives at once and proves ever
 saying it is done. Made for 3 in the morning: plug the card, check the client and project,
 press ⌘↩, go to bed. Started on 2026-09-21.
 
-The interface is in French. Code, comments and this file are in English. Same build as Cairn
+The interface is in French. Code, comments and this file are in English. Free software under
+GPL-3.0 (`LICENSE`, chosen 2026-10-01 so nobody sells it closed under another name); everything
+is written for Rushes, with no dependency. Same build as Cairn
 and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 
 ```bash

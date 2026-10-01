@@ -5,6 +5,11 @@ import Foundation
 /// read, so checking costs nothing but the second read.
 ///
 /// Streaming, so a 40 GB clip is hashed as it is copied.
+///
+/// Written for Rushes from the published specification
+/// (github.com/Cyan4973/xxHash, `doc/xxhash_spec.md`) and checked against its
+/// test vectors in `HashTests`. No code comes from the reference library; had
+/// any, its BSD 2-clause licence would sit with Rushes' GPL-3.0.
 struct XXHash64 {
     private static let p1: UInt64 = 0x9E37_79B1_85EB_CA87
     private static let p2: UInt64 = 0xC2B2_AE3D_27D4_EB4F
