@@ -1,0 +1,39 @@
+name: Ma carte / My card
+description: Une carte mal lue, un fichier oublié, un boîtier que Rushes ne connaît pas. / A card read wrong, a file missed, a camera Rushes does not know.
+title: "Carte : "
+labels: [carte]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci. Avant de formater la carte, fais Aide › Décrire une carte… et joins le fichier ci-dessous : il dit ce qui est sur la carte et ce que Rushes en fait, sans aucune image ni nom de client.
+        Thank you. Before formatting the card, use Aide › Décrire une carte… and attach the file below: it lists what is on the card and what Rushes does with it, with no image and no client name.
+  - type: input
+    id: camera
+    attributes:
+      label: Boîtier et réglage d'enregistrement / Camera and recording setting
+      placeholder: "Canon EOS R6 II, CR3 + HEIF, vidéo XF-AVC"
+    validations:
+      required: true
+  - type: input
+    id: card
+    attributes:
+      label: Carte et lecteur / Card and reader
+      placeholder: "CFexpress B 512 Go, lecteur ProGrade USB-C"
+  - type: textarea
+    id: what
+    attributes:
+      label: Ce qui s'est passé / What happened
+      description: Ce que tu attendais, ce que Rushes a fait. / What you expected, what Rushes did.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostic
+    attributes:
+      label: Diagnostic de la carte / Card diagnostic
+      description: Glisse le fichier diagnostic-….json ici. / Drop the diagnostic-….json file here.
+  - type: input
+    id: version
+    attributes:
+      label: Version de Rushes et de macOS / Rushes and macOS version
+      placeholder: "Rushes 0.3, macOS 26.1"

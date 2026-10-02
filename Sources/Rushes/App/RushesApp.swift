@@ -19,6 +19,10 @@ struct RushesApp: App {
             CommandGroup(replacing: .newItem) {
                 AuditCommand()
             }
+            CommandGroup(after: .appInfo) {
+                Button("Rechercher une mise à jour…") { Task { await UpdateCheck.run() } }
+            }
+            HelpCommands(ingest: ingest)
         }
 
         Window("Vérifier un disque", id: "audit") {

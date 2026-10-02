@@ -6,13 +6,16 @@ JPEG and video into folders, copies to one or two drives at once and proves ever
 saying it is done. Made for 3 in the morning: plug the card, check the client and project,
 press ⌘↩, go to bed. Started on 2026-09-21.
 
-The interface is in French. Code, comments and this file are in English. Same build as Cairn
+The interface is in French. Code, comments and this file are in English. Free software under
+GPL-3.0 (`LICENSE`, chosen 2026-10-01 so nobody sells it closed under another name); everything
+is written for Rushes, with no dependency. Same build as Cairn
 and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 
 ```bash
 ./build.sh                                          # release build → build/Rushes.app
 ./build.sh debug
-swift test --scratch-path /tmp/rushes-build         # 98 tests; a bench and snapshots skipped unless asked
+./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
+swift test --scratch-path /tmp/rushes-build         # 105 tests; a bench and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
@@ -119,12 +122,14 @@ Sources/Rushes/
               (+ CameraBrand), CaptureDates (EXIF via ImageIO), Cameras (identity, letters),
               Naming (ShootDay, NameTemplate, presets, Sanitize, FolderLayout), Settings,
               Plan (Planner, DestinationIndex), History, Journal (per-drive record), Verdict,
-              Readiness (what holds ⌘↩), Report (the HTML page), MHL (ASC MHL v2)
+              Readiness (what holds ⌘↩), Report (the HTML page), MHL (ASC MHL v2),
+              Diagnostic (a card described for a beta tester to send)
   Transfer/   XXHash64, Copier (one file, every drive, checked), Backup (a whole plan +
               manifests), Audit (a drive read back against its records), Volumes (mount
               watching, free space, file system, eject)
   App/        RushesApp (+ AppDelegate: quitting mid-backup is asked), Ingest (the observable
-              model: cards, drives, plan, backup, notifications, sleep assertion)
+              model: cards, drives, plan, backup, notifications, sleep assertion), Feedback
+              (the Aide menu: describe a card, report a problem, write)
   Design/     Palette (Cairn's tokens, forest in pastel, TypeScale, Radius), Components (Cairn's
               page frame, PageTrail, PageSection, Field, chips, accent buttons, checkbox)
   Views/      RootView (+ PrepareView, ActionBar), CardsColumn, PreparePanels (shoot, drives,
@@ -134,6 +139,7 @@ Tests/        Swift Testing: hash, grouping per brand, naming, planner, backup, 
               scanner, journal, verdicts, readiness, report, audit, ASC MHL, file systems
               (hdiutil exFAT/FAT32 images), camera letters
 Tools/        make-icon.swift, make-test-card.swift
+docs/         the council's notes (French), relecture.md (the guide for an outside review of the core)
 ```
 
 ## Cards and brands
@@ -268,6 +274,11 @@ button, `.accentLink` for the rest, a drawn checkbox, the wash at the top, `late
 
 The icon is drawn from the same colours (`Tools/make-icon.swift`).
 
+**Support is asked in one place.** Rushes is free; the About window (`Support/Credits.rtf`), the
+README and `.github/FUNDING.yml` say how to support it (GitHub Sponsors, Ko-fi). Never on the
+preparation page nor while copying, and not on the done page during the beta (Steven,
+2026-10-01). The credits set no colour, so dark mode reads them.
+
 ## Before ⌘↩
 
 The plan carries the drives it counted and the change it was made from, and the button waits
@@ -293,8 +304,30 @@ while it is read. Twenty seconds without a byte moving is said on the copying pa
 copy and a slow one look the same on a percentage. Appearance can be forced dark in Settings
 (Copie tab).
 
+Rushes touches the network once, when Rushes › Rechercher une mise à jour… is chosen
+(`UpdateCheck`): it reads GitHub's releases and says, nothing more. No telemetry, nothing in the
+background (2026-10-01). Distribution is direct, never the Mac App Store, whose sandbox would
+turn the cards' detection into an open panel per card: `build.sh release-signed` signs with
+the hardened runtime from `RUSHES_SIGN_IDENTITY`, notarises and staples the app then the
+`.dmg` with `RUSHES_NOTARY_PROFILE`, and asks Gatekeeper about a quarantined copy. The version
+lives in `Support/Info.plist` only: `CFBundleShortVersionString` in digits (macOS wants them),
+`RushesPrerelease` for the rest (`beta.1`, empty once public), joined by `Bundle.version` as
+the release is tagged (`v0.3.0-beta.1`, decided 2026-10-01).
+
 The first launch asks for removable volumes access (`NSRemovableVolumesUsageDescription`); the
 ad-hoc signature means every rebuild asks again, as Cairn's microphone does.
+
+## The beta
+
+Testers run bodies Steven does not own (worksheet of 2026-10-01). Aide › Décrire une carte…
+(`CardDiagnostic`, `CardDescription`) reads a card through the backup's own `CardScanner.scan`
+then `dated`, and writes JSON where the tester says, refused on the card itself: every entry
+with its size, dates, hidden flag and fate (`Fate`: the shot and role, or why it stays), the
+kinds and the tester's own choices, the EXIF models. Never an image byte, the volume's name or
+path, anything typed, or the serial (only `hasSerial`). The same menu opens GitHub's issue
+forms (`.github/ISSUE_TEMPLATE`: carte, verdict, autre) or mails rushes@stevenrsl.eu.
+`docs/testeurs.md` and `docs/testers.md` (with a glossary, the app being French only) say what
+is asked: three real nights, two drives, and their usual backup kept alongside.
 
 ## Not done yet
 

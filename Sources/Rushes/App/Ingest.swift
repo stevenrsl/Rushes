@@ -208,13 +208,9 @@ final class Ingest {
                 if total > 0 {
                     await self.setScanning(id, "Dates des photos… 0 / \(total)")
                 }
-                let (groups, fromPhotos) = CaptureDates.enrich(scan.groups) { done in
+                scan = CardScanner.dated(scan) { done in
                     Task { @MainActor in self.setScanning(id, "Dates des photos… \(done) / \(total)") }
                 }
-                let camera = fromPhotos
-                    ?? CameraLetters.sonyDevice(in: scan.groups)
-                    ?? (scan.brand == .unknown ? nil : CameraIdentity(name: scan.brand.rawValue, serial: nil))
-                scan = CardScan(root: scan.root, groups: groups, orphans: scan.orphans, unknown: scan.unknown, unreadableFolders: scan.unreadableFolders, brand: scan.brand, camera: camera, setAside: scan.setAside)
                 let finished = scan
                 await MainActor.run {
                     self.update(id) { $0.state = .ready(finished) }

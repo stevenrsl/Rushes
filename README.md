@@ -21,11 +21,29 @@ Trois règles tiennent tout le reste :
 
 L'app est en français. Le code et sa documentation sont en anglais.
 
-## Installer
+## Télécharger
 
-Il n'y a pas encore de version à télécharger toute faite : l'app n'est pas signée par un compte
-développeur Apple, donc un `.zip` téléchargé serait refusé par macOS. On l'installe en la
-construisant soi-même, ce qui prend une minute et ne demande aucun compte.
+Rushes se télécharge sur la page des [versions](https://github.com/stevenrsl/Rushes/releases).
+Il faut un Mac sous **macOS 26 ou plus récent**. Ouvre le fichier `Rushes-<version>.dmg`, glisse
+Rushes sur le raccourci Applications, puis ouvre-la depuis Applications.
+
+**Pendant la bêta, l'app n'est pas encore signée par Apple**, et macOS la bloque au premier
+lancement. Clique sur OK, va dans Réglages Système › Confidentialité et sécurité, et en bas, à
+côté de « Rushes a été bloquée », clique sur **Ouvrir quand même**. C'est à refaire à chaque
+nouvelle version, jusqu'à ce que l'app soit signée et notarisée.
+
+**Au premier lancement, macOS demande l'accès aux volumes amovibles.** Il faut accepter, sinon
+les cartes n'apparaissent pas du tout, ou apparaissent vides.
+
+Pour savoir si une nouvelle version existe : Rushes › Rechercher une mise à jour…. C'est le seul
+moment où l'app se connecte à Internet, et seulement quand tu le demandes. Pour mettre à jour,
+télécharge la nouvelle version et remplace l'ancienne dans Applications. Les réglages sont
+conservés d'une version à l'autre. Quand un réglage change de sens entre deux versions, l'app met
+à jour ce qui est enregistré, une seule fois, au lancement suivant.
+
+## Construire soi-même
+
+Sans rien télécharger d'autre que le code. Ça prend une minute et ne demande aucun compte.
 
 **Ce qu'il faut :** un Mac sous **macOS 26 ou plus récent** et **Xcode** installé depuis le Mac
 App Store. Les outils en ligne de commande seuls (`xcode-select --install`) suffisent peut-être,
@@ -37,29 +55,23 @@ cd Rushes
 ./build.sh
 ```
 
-Le script compile, assemble `Rushes.app` et le signe. Il affiche le chemin de l'app à la fin.
-Pour la mettre dans les Applications et l'ouvrir :
+Le script compile, assemble `Rushes.app` et le signe pour ce Mac. Il affiche le chemin de l'app à
+la fin. Pour la mettre dans les Applications et l'ouvrir :
 
 ```bash
 cp -R build/Rushes.app /Applications/ && open /Applications/Rushes.app
 ```
 
-**Au premier lancement, macOS demande l'accès aux volumes amovibles.** Il faut accepter, sinon
-les cartes n'apparaissent pas du tout, ou apparaissent vides. Cette autorisation est liée à la
-signature de l'app, et comme la signature est locale, elle change à chaque reconstruction : la
-question revient après chaque `./build.sh`. C'est normal, et ça disparaîtra le jour où l'app
-sera signée avec un compte Apple.
+Cette signature est locale, et l'autorisation des volumes amovibles y est liée : la question
+revient après chaque `./build.sh`. C'est normal pour une app construite soi-même.
 
-## Mettre à jour
+Pour mettre à jour :
 
 ```bash
 git pull
 ./build.sh
 cp -R build/Rushes.app /Applications/
 ```
-
-Les réglages sont conservés d'une version à l'autre. Quand un réglage change de sens entre deux
-versions, l'app met à jour ce qui est enregistré, une seule fois, au lancement suivant.
 
 ## Essayer sans tournage
 
@@ -116,11 +128,24 @@ defaults delete eu.stevenrsl.rushes
 
 Les rushes déjà copiés et les relevés restent sur les disques, évidemment.
 
+## Bêta
+
+Rushes est en bêta. Si tu la testes, lis d'abord [la page des testeurs](docs/testeurs.md)
+([in English](docs/testers.md)) : garde ta méthode de sauvegarde habituelle en parallèle, et
+pour tout retour, Aide › Décrire une carte… puis Aide › Signaler un problème…, ou un e-mail à
+[rushes@stevenrsl.eu](mailto:rushes@stevenrsl.eu).
+
+## Soutenir
+
+Rushes est gratuite. Si elle t'épargne des nuits, tu peux la soutenir sur
+[GitHub Sponsors](https://github.com/sponsors/stevenrsl) ou sur
+[Ko-fi](https://ko-fi.com/stevenrsl).
+
 ## Développer
 
 ```bash
 ./build.sh debug                                    # build de débogage
-swift test --scratch-path /tmp/rushes-build         # 98 tests
+swift test --scratch-path /tmp/rushes-build         # 105 tests
 swift Tools/make-icon.swift "$(pwd)"                # redessine l'icône
 ```
 
@@ -128,6 +153,20 @@ swift Tools/make-icon.swift "$(pwd)"                # redessine l'icône
 synchronisé, son fournisseur de fichiers pose des attributs étendus sur les produits du build,
 et `codesign` les refuse. `build.sh` s'en occupe tout seul.
 
+Une version à distribuer se fait avec `./build.sh release-signed` : signature Developer ID,
+notarisation par Apple, et un `.dmg` dans `build/`. Le haut de `build.sh` dit quelles variables
+d'environnement il attend ; aucun identifiant n'est dans le repo.
+
 `CLAUDE.md` décrit le fonctionnement en détail : le regroupement des prises par la norme DCF,
 les modèles de noms, les lettres de caméra, ce que fait le moteur de copie, et les décisions
 prises en chemin.
+
+## Licence
+
+Rushes est un logiciel libre, sous [licence publique générale GNU, version 3](LICENSE)
+(GPL-3.0). Tu peux l'utiliser, l'étudier, le modifier et le redistribuer, y compris modifié.
+Celui qui redistribue Rushes ou un logiciel qui en reprend le code doit le faire sous la même
+licence, avec son code source : personne ne peut en faire une app fermée sous un autre nom.
+
+Tout le code est écrit pour Rushes, sans dépendance. L'empreinte XXH64 est écrite d'après sa
+spécification publique, pas reprise de la bibliothèque de référence.
