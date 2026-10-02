@@ -25,8 +25,12 @@ L'app est en français. Le code et sa documentation sont en anglais.
 
 Rushes se télécharge sur la page des [versions](https://github.com/stevenrsl/Rushes/releases).
 Il faut un Mac sous **macOS 26 ou plus récent**. Ouvre le fichier `Rushes-<version>.dmg`, glisse
-Rushes sur le raccourci Applications, puis ouvre-la depuis Applications. L'app est signée et
-notarisée par Apple : macOS l'ouvre sans avertissement.
+Rushes sur le raccourci Applications, puis ouvre-la depuis Applications.
+
+**Pendant la bêta, l'app n'est pas encore signée par Apple**, et macOS la bloque au premier
+lancement. Clique sur OK, va dans Réglages Système › Confidentialité et sécurité, et en bas, à
+côté de « Rushes a été bloquée », clique sur **Ouvrir quand même**. C'est à refaire à chaque
+nouvelle version, jusqu'à ce que l'app soit signée et notarisée.
 
 **Au premier lancement, macOS demande l'accès aux volumes amovibles.** Il faut accepter, sinon
 les cartes n'apparaissent pas du tout, ou apparaissent vides.

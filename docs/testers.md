@@ -40,7 +40,10 @@ An English version will come. Until then, the words that matter:
    [releases page](https://github.com/stevenrsl/Rushes/releases). During the beta they are
    pre-releases.
 2. Open it and drag Rushes onto the Applications shortcut.
-3. Open Rushes from Applications. On first launch macOS asks for access to removable volumes:
+3. Open Rushes from Applications. **For now the app is not signed by Apple**, and macOS blocks
+   it: click OK, go to System Settings › Privacy & Security, and at the bottom, next to "Rushes
+   was blocked", click **Open Anyway**. You will need to do this again for each new version.
+4. On first launch macOS also asks for access to removable volumes:
    allow it, or the cards will not show up.
 
 You need a Mac running macOS 26 or later. To find out whether a new version is out: Rushes ›

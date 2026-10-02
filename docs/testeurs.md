@@ -23,7 +23,11 @@ avant sa sortie publique.
    [versions](https://github.com/stevenrsl/Rushes/releases). Pendant la bêta, ce sont des
    pré-versions.
 2. Ouvre-le et glisse Rushes sur le raccourci Applications.
-3. Ouvre Rushes depuis Applications. Au premier lancement, macOS demande l'accès aux volumes
+3. Ouvre Rushes depuis Applications. **Pour l'instant, l'app n'est pas signée par Apple**, et
+   macOS la bloque : clique sur OK, va dans Réglages Système › Confidentialité et sécurité, et
+   en bas, à côté de « Rushes a été bloquée », clique sur **Ouvrir quand même**. C'est à refaire
+   à chaque nouvelle version.
+4. Au premier lancement, macOS demande aussi l'accès aux volumes
    amovibles : accepte, sinon les cartes n'apparaissent pas.
 
 Il faut un Mac sous macOS 26 ou plus récent. Pour savoir si une nouvelle version est sortie :
