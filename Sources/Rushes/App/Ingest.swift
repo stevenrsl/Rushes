@@ -26,6 +26,9 @@ final class Ingest {
         var labelByHand = false
         var included = true
         var state: State = .scanning("Lecture de la carte…")
+        /// The volume's serial when it was read: a card formatted from the
+        /// done page must still be this one (`VolumeWatcher.identity`).
+        var identity: String?
 
         var id: String { url.path }
         var scan: CardScan? { if case .ready(let scan) = state { scan } else { nil } }
@@ -57,6 +60,8 @@ final class Ingest {
         didSet {
             guard settings != oldValue else { return }
             settings.save()
+            Theme.shared.ambiance = settings.ambiance
+            Theme.shared.titles = settings.titles
             if settings.destinations != oldValue.destinations { refreshDrives() }
             schedulePlan()
         }
@@ -91,6 +96,8 @@ final class Ingest {
 
     init() {
         settings = IngestSettings.load()
+        Theme.shared.ambiance = settings.ambiance
+        Theme.shared.titles = settings.titles
         watcher.onChange = { [weak self] in self?.volumesChanged() }
         refreshDrives()
         volumesChanged()
@@ -131,7 +138,8 @@ final class Ingest {
         // A letter to show while the card is read; its camera's comes after.
         let label = CameraLetters.letter(for: nil, known: settings.cameras, taken: Set(cards.map(\.cameraLabel)))
         let name = isVolume ? VolumeWatcher.name(of: url) : url.lastPathComponent
-        cards.append(Card(url: url, name: name, isVolume: isVolume, cameraLabel: label))
+        let identity = isVolume ? VolumeWatcher.identity(of: url) : nil
+        cards.append(Card(url: url, name: name, isVolume: isVolume, cameraLabel: label, identity: identity))
         scan(url)
     }
 
@@ -396,6 +404,43 @@ final class Ingest {
         }
     }
 
+    /// The cards that may be formatted from the done page: asked for in the
+    /// settings, mounted, told "formatable" and still the volume that was read.
+    var formatableCards: [Card] {
+        guard settings.whenDone == .offerFormat else { return [] }
+        return readyCards.filter { card in
+            guard card.isVolume, let identity = verifiedIdentities[card.id], identity == card.identity else { return false }
+            return verdicts.first(where: { $0.cardID == card.id })?.level == .safe
+        }
+    }
+
+    /// Each card's serial when its verdict was given, by card. Only these
+    /// may be formatted, and only while the reader still holds them.
+    private var verifiedIdentities: [String: String] = [:]
+    /// The card being formatted, if one is.
+    private(set) var formatting: String?
+    /// What came of each format asked tonight, said on the done page.
+    private(set) var formatMessages: [String] = []
+
+    /// Erases one card told "formatable", after the page asked. Nothing is
+    /// assumed: the identity, the verdict and the mount are checked again.
+    func format(_ card: Card) async {
+        guard formatting == nil,
+              formatableCards.contains(where: { $0.id == card.id }),
+              let identity = verifiedIdentities[card.id]
+        else { return }
+        formatting = card.id
+        let avoiding = Set(drives.map(\.volume))
+        do {
+            try await VolumeWatcher.format(card.url, identity: identity, avoiding: avoiding)
+            formatMessages.append("« \(card.name) » est formatée et éjectée.")
+        } catch {
+            formatMessages.append("« \(card.name) » n'a pas été formatée : \(error.localizedDescription)")
+        }
+        verifiedIdentities[card.id] = nil
+        formatting = nil
+    }
+
     /// The plan on screen is the one the current cards, drives and settings
     /// make. Anything else must not be started, whatever the button says.
     private var isCurrent: Bool {
@@ -415,6 +460,10 @@ final class Ingest {
         runningPlan = plan
         cancelFlag.reset()
         verdicts = []
+        verifiedIdentities = [:]
+        formatMessages = []
+        lastBackup = nil
+        uploadPhase = .idle
         phase = .copying
         // Remembered once copying, when a change of settings makes no plan.
         settings.recentClients = IngestSettings.remembering(settings.client, in: settings.recentClients)
@@ -481,6 +530,9 @@ final class Ingest {
             guard let scan = card.scan else { return nil }
             return Verdicts.of(cardID: card.id, cardName: card.name, scan: scan, plan: runningPlan, report: report)
         }
+        verifiedIdentities = Dictionary(uniqueKeysWithValues: readyCards.compactMap { card in
+            card.identity.map { (card.id, $0) }
+        })
         writeReports(report)
         if let onQuit {
             self.onQuit = nil
@@ -491,9 +543,104 @@ final class Ingest {
         remember(report)
         refreshDrives()
         notify(report)
-        if report.succeeded, settings.ejectWhenDone, !ejectableCards.isEmpty {
+        if report.succeeded, settings.whenDone == .eject, !ejectableCards.isEmpty {
             Task { await ejectCards() }
         }
+        lastBackup = report
+        if settings.uploadWhenDone, canUpload { startUpload() }
+    }
+
+    // MARK: Sending
+
+    enum UploadPhase {
+        case idle
+        case sending
+        case finished(UploadReport)
+    }
+
+    private(set) var uploadPhase = UploadPhase.idle
+    private(set) var uploadProgress = UploadProgress()
+    /// The backup whose verified files are sent: what it recorded is the list.
+    private var lastBackup: BackupReport?
+    private let uploadCancel = CancelFlag()
+    private var uploadActivity: NSObjectProtocol?
+
+    var isUploading: Bool { if case .sending = uploadPhase { true } else { false } }
+
+    /// The first drive of the last backup still plugged in: the copy that is
+    /// sent is a verified one, never the card read again.
+    private var uploadSource: URL? {
+        runningPlan.drives.map { URL(fileURLWithPath: $0) }.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    var canUpload: Bool {
+        guard settings.upload.isReady, !isUploading, let lastBackup, !lastBackup.entries.isEmpty else { return false }
+        return uploadSource != nil
+    }
+
+    func startUpload() {
+        guard canUpload, let report = lastBackup, let drive = uploadSource else { return }
+        let target = settings.upload
+        let password = target.isServer && !target.user.isEmpty ? Keychain.password(for: target.keychainAccount) : nil
+        let items = Upload.items(of: report, on: drive)
+        guard !items.isEmpty else { return }
+        uploadCancel.reset()
+        uploadProgress = UploadProgress()
+        uploadPhase = .sending
+        // As for the backup: the screen may sleep, the Mac may not.
+        uploadActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .idleSystemSleepDisabled],
+            reason: "Envoi de la sauvegarde"
+        )
+        let flag = uploadCancel
+        Task.detached(priority: .utility) {
+            let result = Upload.run(items, to: target, password: password, isCancelled: { flag.isSet }) { state in
+                Task { @MainActor in self.advanceUpload(state) }
+            }
+            await MainActor.run { self.finishUpload(result) }
+        }
+    }
+
+    func cancelUpload() { uploadCancel.set() }
+
+    /// Set while the app waits for curl to stop before it goes.
+    private var onUploadQuit: (() -> Void)?
+
+    /// A quit in the middle of a send: curl is stopped first, so nothing goes
+    /// on sending once the app is gone.
+    func stopUploadForQuit(_ done: @escaping () -> Void) {
+        guard isUploading else { return done() }
+        onUploadQuit = done
+        cancelUpload()
+    }
+
+    private func advanceUpload(_ state: UploadProgress) {
+        guard isUploading else { return }
+        uploadProgress = state
+    }
+
+    private func finishUpload(_ report: UploadReport) {
+        if let uploadActivity { ProcessInfo.processInfo.endActivity(uploadActivity) }
+        uploadActivity = nil
+        uploadPhase = .finished(report)
+        if let onUploadQuit {
+            self.onUploadQuit = nil
+            onUploadQuit()
+            return
+        }
+        let content = UNMutableNotificationContent()
+        let name = settings.upload.name
+        if report.succeeded {
+            content.title = "Envoi terminé"
+            content.body = "\(Format.count(report.sent + report.alreadyThere, "fichier")) sur \(name)."
+        } else if report.cancelled {
+            content.title = "Envoi interrompu"
+            content.body = "\(Format.count(report.sent, "fichier")) envoyés vers \(name) avant l'arrêt. Les disques, eux, sont complets."
+        } else {
+            content.title = "Envoi incomplet"
+            content.body = report.stopped ?? "\(Format.count(report.failures.count, "fichier")) n'\(report.failures.count > 1 ? "ont" : "a") pas pu être envoyé\(report.failures.count > 1 ? "s" : "") vers \(name). Les disques, eux, sont complets."
+        }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 
     /// The readable reports of the last backup, first drive first.
@@ -592,7 +739,12 @@ final class Ingest {
     /// Back to the preparation, with the plan made again so what was just
     /// copied shows as saved and what failed can be tried again.
     func reset() {
+        guard !isUploading else { return }
         phase = .preparing
+        uploadPhase = .idle
+        lastBackup = nil
+        formatMessages = []
+        verifiedIdentities = [:]
         progress = BackupProgress()
         refreshDrives()
         let known = Set(cards.map(\.id))

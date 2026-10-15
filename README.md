@@ -11,7 +11,9 @@ tu vas dormir.
 Trois règles tiennent tout le reste :
 
 - **Une carte n'est jamais que lue.** Rien n'est déplacé, renommé, écrit ni effacé dessus.
-  Formater, c'est le travail de l'appareil photo, une fois la sauvegarde vérifiée.
+  Formater se fait dans l'appareil photo, une fois la sauvegarde vérifiée, ou depuis Rushes si
+  tu le choisis : la page de fin propose alors de formater chaque carte « formatable », une par
+  une, après confirmation, et jamais une autre.
 - **Rien n'est jamais remplacé sur un disque.** Un nom déjà pris est un conflit qui retient la
   sauvegarde, jamais un écrasement. Une copie coupée en route ne laisse aucun fichier qui ait
   l'air fini.
@@ -36,7 +38,8 @@ nouvelle version, jusqu'à ce que l'app soit signée et notarisée.
 les cartes n'apparaissent pas du tout, ou apparaissent vides.
 
 Pour savoir si une nouvelle version existe : Rushes › Rechercher une mise à jour…. C'est le seul
-moment où l'app se connecte à Internet, et seulement quand tu le demandes. Pour mettre à jour,
+moment où l'app se connecte à Internet, et seulement quand tu le demandes, avec l'envoi vers un
+serveur si tu en règles un (Réglages › Envoi). Pour mettre à jour,
 télécharge la nouvelle version et remplace l'ancienne dans Applications. Les réglages sont
 conservés d'une version à l'autre. Quand un réglage change de sens entre deux versions, l'app met
 à jour ce qui est enregistré, une seule fois, au lancement suivant.
@@ -110,7 +113,19 @@ une carte qui n'a pas été formatée même si le client a changé de nom entre-
 jamais redonner un numéro déjà attribué. Ces fichiers se suppriment sans rien casser.
 
 Rien n'est écrit ailleurs : pas de base de données sur le Mac, pas de dossier caché dans la
-maison. Les réglages tiennent dans `~/Library/Preferences/eu.stevenrsl.rushes.plist`.
+maison. Les réglages tiennent dans `~/Library/Preferences/eu.stevenrsl.rushes.plist`, et le mot
+de passe d'un serveur d'envoi dans le trousseau.
+
+## Envoyer une copie ailleurs
+
+Réglages › Envoi : une fois la sauvegarde vérifiée sur les disques, Rushes peut en envoyer une
+copie vers un dossier synchronisé (iCloud Drive, Dropbox, Google Drive, OneDrive, un NAS monté)
+ou un serveur FTP ou FTPS, tout seul à la fin ou avec le bouton « Envoyer » de la page de fin.
+La copie est lue sur le premier disque, jamais sur la carte, et le verdict des cartes ne
+l'attend pas : les disques restent la sauvegarde. Les règles des disques tiennent de l'autre
+côté : un fichier part sous un nom caché et n'est nommé qu'une fois complet, rien n'est jamais
+remplacé, et ce qui est déjà là à sa taille n'est pas renvoyé. Le mot de passe du serveur est
+gardé dans le trousseau du Mac.
 
 ## Vérifier un disque, des mois plus tard
 
@@ -124,6 +139,7 @@ nommé, avec le nom que lui avait donné l'appareil. La vérification ne fait qu
 ```bash
 rm -rf /Applications/Rushes.app
 defaults delete eu.stevenrsl.rushes
+security delete-generic-password -s eu.stevenrsl.rushes.upload   # si un serveur a été réglé
 ```
 
 Les rushes déjà copiés et les relevés restent sur les disques, évidemment.

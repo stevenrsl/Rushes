@@ -1,4 +1,5 @@
 import AppKit
+import Observation
 import SwiftUI
 
 /// Cairn's design system, carried over, moved into the forest, then softened.
@@ -50,47 +51,102 @@ enum Palette {
         })
     }
 
+    // MARK: Ambiance
+
+    /// The tokens of the ambiance chosen in Réglages › Apparence. Reading
+    /// `Theme.shared` here is what redraws a view when it changes: the views
+    /// that use a colour are the ones Observation tracks.
+    private static var current: Tokens {
+        let ambiance = Theme.shared.ambiance
+        if let made = made[ambiance] { return made }
+        let tokens = Tokens(ambiance)
+        made[ambiance] = tokens
+        return tokens
+    }
+
+    /// Made once per ambiance: a dynamic colour is an object, and a page asks
+    /// for hundreds of them per redraw. Only the main thread draws.
+    private static var made: [Ambiance: Tokens] = [:]
+
     // MARK: Ground and ink
 
     /// Wool with a breath of lichen. The forest at night in dark.
-    static let ground = dynamic(oklch(0.962, 0.011, 118), oklch(0.195, 0.014, 165))
+    static var ground: Color { current.ground }
     /// The cards' column: a shade deeper, as Cairn's sidebar is.
-    static let groundSunk = dynamic(oklch(0.936, 0.015, 122), oklch(0.165, 0.013, 165))
+    static var groundSunk: Color { current.groundSunk }
     /// A block on the page, a sheet, a popover: paler ivory.
-    static let surface = dynamic(oklch(0.988, 0.006, 105), oklch(0.232, 0.015, 165))
-    static let surfaceRaised = dynamic(oklch(0.997, 0.003, 100), oklch(0.268, 0.016, 165))
+    static var surface: Color { current.surface }
+    static var surfaceRaised: Color { current.surfaceRaised }
 
     /// Pine slate.
-    static let ink = dynamic(oklch(0.25, 0.020, 160), oklch(0.94, 0.010, 110))
-    static let inkSoft = dynamic(oklch(0.44, 0.020, 160), oklch(0.77, 0.014, 130))
-    static let inkFaint = dynamic(oklch(0.515, 0.018, 155), oklch(0.655, 0.014, 140))
+    static var ink: Color { current.ink }
+    static var inkSoft: Color { current.inkSoft }
+    static var inkFaint: Color { current.inkFaint }
 
-    static let hairline = dynamic(oklch(0.885, 0.014, 120), oklch(0.31, 0.014, 165))
-    static let hairlineStrong = dynamic(oklch(0.82, 0.016, 125), oklch(0.40, 0.015, 165))
+    static var hairline: Color { current.hairline }
+    static var hairlineStrong: Color { current.hairlineStrong }
 
     /// The row under the pointer, a wash of ink.
-    static let hover = dynamic(oklch(0.25, 0.020, 160, 0.05), oklch(0.94, 0.010, 110, 0.06))
+    static var hover: Color { current.hover }
 
     // MARK: The forest, in pastel
 
     /// Pastel sage: the one button, a chosen chip, a ticked kind. Always with
     /// `onAccent` on it, and a hairline of `accentLine` to hold its shape on
     /// the pale ground.
-    static let accent = dynamic(oklch(0.865, 0.055, 150), oklch(0.80, 0.070, 150))
-    static let onAccent = dynamic(oklch(0.30, 0.045, 155), oklch(0.20, 0.030, 155))
+    static var accent: Color { current.accent }
+    static var onAccent: Color { current.onAccent }
     /// The deep forest that writes: links, "déjà sauvegardé", a checked mark.
     /// 6.13:1 on the ground in light, 10.74:1 in dark.
-    static let accentInk = dynamic(oklch(0.46, 0.085, 155), oklch(0.82, 0.075, 150))
+    static var accentInk: Color { current.accentInk }
     /// The green that draws: bars, strokes, a checkbox's edge.
-    static let accentLine = dynamic(oklch(0.56, 0.090, 152), oklch(0.70, 0.085, 150))
+    static var accentLine: Color { current.accentLine }
     /// Paler still: the naming example, a selected row.
-    static let accentSoft = dynamic(oklch(0.935, 0.028, 150), oklch(0.30, 0.035, 155))
+    static var accentSoft: Color { current.accentSoft }
 
     /// The top of the page, the forest fading into the ground.
-    static let wash: [Color] = [
-        dynamic(oklch(0.88, 0.045, 150, 0.35), oklch(0.55, 0.060, 155, 0.12)),
-        dynamic(oklch(0.962, 0.011, 118, 0), oklch(0.195, 0.014, 165, 0)),
-    ]
+    static var wash: [Color] { current.wash }
+
+    /// Every token of one ambiance. The forest is the original, number for
+    /// number; the others move its hues and keep its lightness, which is what
+    /// the contrasts depend on. Each was measured as the forest was (2026-10-15):
+    /// `inkFaint` on `groundSunk` 4.64:1 at worst, `alert` on `groundSunk`
+    /// 4.50:1, `accentInk` on the ground 6.13:1, `onAccent` on `accent` 9:1,
+    /// bars against their track 3.17:1, all within sRGB.
+    struct Tokens {
+        let ground, groundSunk, surface, surfaceRaised: Color
+        let ink, inkSoft, inkFaint, hairline, hairlineStrong, hover: Color
+        let accent, onAccent, accentInk, accentLine, accentSoft: Color
+        let wash: [Color]
+
+        init(_ ambiance: Ambiance) {
+            let t = ambiance.tone
+            // a: the accent's hue. g: the paper's by day. n: the ground's at
+            // night. c: how much colour the accent carries, k the neutrals.
+            let a = t.accent, g = t.paper, n = t.night, c = t.chroma, k = t.neutral
+            ground = Palette.dynamic(Palette.oklch(0.962, 0.011 * k, g), Palette.oklch(0.195, 0.014 * k, n))
+            groundSunk = Palette.dynamic(Palette.oklch(0.936, 0.015 * k, g + 4), Palette.oklch(0.165, 0.013 * k, n))
+            surface = Palette.dynamic(Palette.oklch(0.988, 0.006 * k, g - 13), Palette.oklch(0.232, 0.015 * k, n))
+            surfaceRaised = Palette.dynamic(Palette.oklch(0.997, 0.003 * k, g - 18), Palette.oklch(0.268, 0.016 * k, n))
+
+            ink = Palette.dynamic(Palette.oklch(0.25, 0.020 * k, a + 10), Palette.oklch(0.94, 0.010 * k, g - 8))
+            inkSoft = Palette.dynamic(Palette.oklch(0.44, 0.020 * k, a + 10), Palette.oklch(0.77, 0.014 * k, g + 12))
+            inkFaint = Palette.dynamic(Palette.oklch(0.515, 0.018 * k, a + 5), Palette.oklch(0.655, 0.014 * k, g + 22))
+            hairline = Palette.dynamic(Palette.oklch(0.885, 0.014 * k, g + 2), Palette.oklch(0.31, 0.014 * k, n))
+            hairlineStrong = Palette.dynamic(Palette.oklch(0.82, 0.016 * k, g + 7), Palette.oklch(0.40, 0.015 * k, n))
+            hover = Palette.dynamic(Palette.oklch(0.25, 0.020 * k, a + 10, 0.05), Palette.oklch(0.94, 0.010 * k, g - 8, 0.06))
+
+            accent = Palette.dynamic(Palette.oklch(0.865, 0.055 * c, a), Palette.oklch(0.80, 0.070 * c, a))
+            onAccent = Palette.dynamic(Palette.oklch(0.30, 0.045 * c, a + 5), Palette.oklch(0.20, 0.030 * c, a + 5))
+            accentInk = Palette.dynamic(Palette.oklch(0.46, 0.085 * c, a + 5), Palette.oklch(0.82, 0.075 * c, a))
+            accentLine = Palette.dynamic(Palette.oklch(0.56, 0.090 * c, a + 2), Palette.oklch(0.70, 0.085 * c, a))
+            accentSoft = Palette.dynamic(Palette.oklch(0.935, 0.028 * c, a), Palette.oklch(0.30, 0.035 * c, a + 5))
+            wash = [
+                Palette.dynamic(Palette.oklch(0.88, 0.045 * c, a, 0.35), Palette.oklch(0.55, 0.060 * c, a + 5, 0.12)),
+                Palette.dynamic(Palette.oklch(0.962, 0.011 * k, g, 0), Palette.oklch(0.195, 0.014 * k, n, 0)),
+            ]
+        }
+    }
 
     // MARK: Signals, Cairn's own
 
@@ -125,19 +181,22 @@ enum Palette {
     }
 }
 
-/// Cairn's six sizes by role, and nothing else.
+/// Cairn's six sizes by role, and nothing else. The titles are in serif
+/// unless the ambiance says sans (Réglages › Apparence).
 enum TypeScale {
     static let micro = Font.system(size: 11)
     static let meta = Font.system(size: 12.5)
     static let ui = Font.system(size: 14)
-    static let strong = Font.system(size: 18, design: .serif)
-    static let title = Font.system(size: 22, design: .serif)
-    static let display = Font.system(size: 30, design: .serif)
+    static var strong: Font { Font.system(size: 18, design: titles) }
+    static var title: Font { Font.system(size: 22, design: titles) }
+    static var display: Font { Font.system(size: 30, design: titles) }
 
     /// The sentence under a page's title: what the backup will do.
-    static let aim = Font.system(size: 16, design: .serif).italic()
+    static var aim: Font { Font.system(size: 16, design: titles).italic() }
     /// The one figure of the copying page.
-    static let figure = Font.system(size: 64, design: .serif)
+    static var figure: Font { Font.system(size: 64, design: titles) }
+
+    private static var titles: Font.Design { Theme.shared.titles == .serif ? .serif : .default }
     /// A section's name inside a block: the meta size, medium, in the soft ink.
     /// Not uppercase with tracking, which is what every generic dashboard does.
     static let label = Font.system(size: 12.5, weight: .medium)
@@ -152,4 +211,70 @@ enum Radius {
     static let control: CGFloat = 10
     static let surface: CGFloat = 16
     static let sheet: CGFloat = 22
+}
+
+// MARK: - The ambiance
+
+/// What Réglages › Apparence chose, read by `Palette` and `TypeScale` while a
+/// view draws, so changing it redraws every window at once. `Ingest` keeps it
+/// equal to the settings.
+@Observable
+final class Theme {
+    static let shared = Theme()
+    var ambiance = Ambiance.forest
+    var titles = TitleFace.serif
+}
+
+/// A set of hues for the whole app, asked for by Steven on 2026-10-15 ("custom
+/// l'ambiance graphique"). Presets rather than a colour picker: a pastel picked
+/// by hand cannot be promised to carry text, and these were all measured. The
+/// signals (`late`, `alert`) and the camera hues stay what they are in every
+/// one, so a warning reads the same whatever the ambiance; none of the accents
+/// sits near their peat and sea thrift.
+enum Ambiance: String, Codable, CaseIterable, Identifiable, Sendable {
+    case forest, ocean, lavender, slate
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .forest: "Forêt"
+        case .ocean: "Océan"
+        case .lavender: "Lavande"
+        case .slate: "Ardoise"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .forest: "Sauge pastel sur de la laine, l'ambiance d'origine."
+        case .ocean: "Bleu d'eau sur un papier froid."
+        case .lavender: "Lavande sur un papier crème."
+        case .slate: "Presque sans couleur, un gris bleuté."
+        }
+    }
+
+    /// The hues and how much colour: see `Palette.Tokens`.
+    var tone: (accent: Double, paper: Double, night: Double, chroma: Double, neutral: Double) {
+        switch self {
+        case .forest: (150, 118, 165, 1, 1)
+        case .ocean: (230, 215, 240, 1, 1)
+        case .lavender: (300, 80, 290, 0.8, 0.8)
+        case .slate: (255, 250, 255, 0.35, 0.5)
+        }
+    }
+}
+
+/// Titles in New York, as Cairn's, or in the system's sans.
+enum TitleFace: String, Codable, CaseIterable, Identifiable, Sendable {
+    case serif, sans
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .serif: "Avec empattements"
+        case .sans: "Sans empattements"
+        }
+    }
 }

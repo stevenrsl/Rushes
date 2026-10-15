@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// What changes rarely, in tabs as Cairn's settings are.
@@ -10,6 +11,10 @@ struct SettingsView: View {
                 .tabItem { Label("Caméras", systemImage: "camera") }
             CopySettings()
                 .tabItem { Label("Copie", systemImage: "externaldrive") }
+            UploadSettings()
+                .tabItem { Label("Envoi", systemImage: "icloud.and.arrow.up") }
+            AppearanceSettings()
+                .tabItem { Label("Apparence", systemImage: "paintpalette") }
         }
         .frame(width: 540)
         .tint(Palette.accentLine)
@@ -203,22 +208,217 @@ private struct CopySettings: View {
 
             Section {
                 Toggle("Ignorer ce qui est déjà sauvegardé sur chaque disque", isOn: $ingest.settings.skipAlreadyCopied)
-                Toggle("Éjecter les cartes quand tout est vérifié", isOn: $ingest.settings.ejectWhenDone)
-                Help("Une prise n'est ignorée que si le relevé la liste et qu'elle est encore là, à la bonne taille, sur chaque disque : un fichier trié, déplacé ou disparu est recopié. Rushes ne modifie ni n'efface jamais rien sur une carte, et ne remplace jamais un fichier sur un disque. Formate tes cartes dans l'appareil, une fois la sauvegarde vérifiée.")
+                Help("Une prise n'est ignorée que si le relevé la liste et qu'elle est encore là, à la bonne taille, sur chaque disque : un fichier trié, déplacé ou disparu est recopié. Rushes ne remplace jamais un fichier sur un disque.")
+            }
+
+            Section {
+                Picker("À la fin, les cartes formatables", selection: $ingest.settings.whenDone) {
+                    ForEach(IngestSettings.WhenDone.allCases) { Text($0.title).tag($0) }
+                }
+                Help(whenDoneHelp)
             }
 
             Section {
                 Toggle("Écrire un ASC MHL dans chaque tournage", isOn: $ingest.settings.writeMHL)
                 Help("Le format de liste de hashs que lisent les DIT, Silverstack et les post-productions. Chaque sauvegarde ajoute une génération dans un dossier ascmhl, à côté des fichiers, sans jamais réécrire les précédentes. Le relevé de Rushes, lui, est toujours écrit.")
             }
+        }
+        .formStyle(.grouped)
+        .frame(minHeight: 460)
+    }
 
+    private var whenDoneHelp: String {
+        switch ingest.settings.whenDone {
+        case .eject:
+            "Une carte dont tout est sur chaque disque est éjectée, prête à retourner dans l'appareil pour y être formatée. Une carte « ne pas formater » ne l'est jamais."
+        case .keep:
+            "Les cartes restent dans le lecteur. La page de fin propose de les éjecter."
+        case .offerFormat:
+            "La page de fin propose de formater chaque carte « formatable », une par une, après confirmation, puis l'éjecte. Rushes vérifie d'abord que c'est bien la carte sauvegardée. Une carte « à vérifier » ou « ne pas formater » ne l'est jamais. Si l'appareil demande ensuite à recréer ses dossiers ou sa base d'images, laisse-le faire."
+        }
+    }
+}
+
+/// Where a copy of the night goes once the drives are verified.
+private struct UploadSettings: View {
+    @Environment(Ingest.self) private var ingest
+    @State private var password = ""
+    @State private var testResult: String?
+    @State private var testing = false
+
+    var body: some View {
+        @Bindable var ingest = ingest
+        let target = ingest.settings.upload
+        Form {
             Section {
-                Picker("Apparence", selection: $ingest.settings.appearance) {
-                    ForEach(IngestSettings.Appearance.allCases) { Text($0.title).tag($0) }
+                Picker("Envoyer une copie vers", selection: $ingest.settings.upload.kind) {
+                    ForEach(UploadTarget.Kind.allCases) { Text($0.title).tag($0) }
+                }
+                Help("Une fois la sauvegarde vérifiée sur les disques, Rushes peut en envoyer une copie ailleurs. Elle est lue sur le premier disque, jamais sur la carte, et le verdict des cartes ne l'attend pas : les disques restent la sauvegarde.")
+            }
+
+            switch target.kind {
+            case .none:
+                EmptyView()
+            case .folder:
+                Section {
+                    LabeledContent("Dossier") {
+                        HStack(spacing: 10) {
+                            Text(target.folder.isEmpty ? "Aucun" : target.folder)
+                                .font(TypeScale.code)
+                                .foregroundStyle(target.folder.isEmpty ? Palette.inkFaint : Palette.ink)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Button("Choisir…") { chooseFolder() }
+                        }
+                    }
+                    Help("Le dossier qu'iCloud Drive, Dropbox, Google Drive, OneDrive ou un NAS monté synchronise. Chaque copie y est relue avant d'être nommée ; leur app l'envoie ensuite en ligne à son rythme, et c'est elle qui dit quand c'est fait.")
+                }
+            case .ftp, .ftps:
+                Section {
+                    TextField("Serveur", text: $ingest.settings.upload.host, prompt: Text("ftp.exemple.fr"))
+                    TextField("Port", text: port, prompt: Text("21"))
+                    TextField("Identifiant", text: $ingest.settings.upload.user, prompt: Text("anonyme si vide"))
+                    SecureField("Mot de passe", text: $password)
+                        .onSubmit(savePassword)
+                    TextField("Dossier", text: $ingest.settings.upload.path, prompt: Text("à la racine du compte"))
+                    HStack(spacing: 12) {
+                        Button(testing ? "Test en cours…" : "Tester la connexion") { test() }
+                            .disabled(testing || !target.isReady)
+                        if let testResult {
+                            Text(testResult)
+                                .font(TypeScale.meta)
+                                .foregroundStyle(Palette.inkSoft)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Help("Les tournages y sont rangés comme sur les disques. Chaque fichier est envoyé sous un nom caché, renommé une fois complet, puis sa taille est demandée au serveur. Un fichier déjà là à sa taille n'est pas renvoyé, et rien n'est jamais remplacé. Le mot de passe est gardé dans le trousseau du Mac." + (target.kind == .ftp ? " En FTP simple, il passe en clair sur le réseau : préfère FTPS si le serveur le propose." : ""))
+                }
+            }
+
+            if target.kind != .none {
+                Section {
+                    Toggle("Envoyer dès la fin de chaque sauvegarde", isOn: $ingest.settings.uploadWhenDone)
+                    Help("Sinon, la page de fin propose « Envoyer ». Le Mac ne se met pas en veille pendant l'envoi.")
                 }
             }
         }
         .formStyle(.grouped)
         .frame(minHeight: 460)
+        .onAppear { password = Keychain.password(for: ingest.settings.upload.keychainAccount) ?? "" }
+        .onDisappear(perform: savePassword)
+        .onChange(of: target.kind) { _, _ in testResult = nil }
+    }
+
+    /// 0, the protocol's own port, reads as an empty field.
+    private var port: Binding<String> {
+        Binding(
+            get: { ingest.settings.upload.port > 0 ? String(ingest.settings.upload.port) : "" },
+            set: { ingest.settings.upload.port = Int($0.filter(\.isNumber)).map { min($0, 65535) } ?? 0 }
+        )
+    }
+
+    private func savePassword() {
+        let target = ingest.settings.upload
+        guard target.isServer, !target.serverHost.isEmpty else { return }
+        Keychain.setPassword(password, for: target.keychainAccount)
+    }
+
+    private func test() {
+        savePassword()
+        let target = ingest.settings.upload
+        let password = password
+        testing = true
+        testResult = nil
+        Task {
+            let result = await Task.detached { Upload.test(target, password: password) }.value
+            testResult = result
+            testing = false
+        }
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choisir"
+        panel.message = "Le dossier synchronisé où Rushes envoie une copie des tournages."
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/CloudStorage")
+        if panel.runModal() == .OK, let url = panel.url {
+            ingest.settings.upload.folder = url.path
+        }
+    }
+}
+
+/// The ambiance, the titles' face, light or dark.
+private struct AppearanceSettings: View {
+    @Environment(Ingest.self) private var ingest
+
+    var body: some View {
+        @Bindable var ingest = ingest
+        Form {
+            Section {
+                ForEach(Ambiance.allCases) { ambiance in
+                    AmbianceRow(ambiance: ambiance, chosen: ingest.settings.ambiance == ambiance) {
+                        ingest.settings.ambiance = ambiance
+                    }
+                }
+            } footer: {
+                Help("Les couleurs des signaux (à regarder, ne pas formater) et celles des caméras restent les mêmes dans chaque ambiance, pour se lire pareil.")
+            }
+
+            Section {
+                Picker("Titres", selection: $ingest.settings.titles) {
+                    ForEach(TitleFace.allCases) { Text($0.title).tag($0) }
+                }
+                Picker("Apparence", selection: $ingest.settings.appearance) {
+                    ForEach(IngestSettings.Appearance.allCases) { Text($0.title).tag($0) }
+                }
+                Text("Sauvegarde vérifiée")
+                    .font(TypeScale.title)
+                    .foregroundStyle(Palette.ink)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(minHeight: 460)
+    }
+}
+
+/// One ambiance, drawn with its own colours.
+private struct AmbianceRow: View {
+    let ambiance: Ambiance
+    let chosen: Bool
+    let choose: () -> Void
+
+    var body: some View {
+        let tokens = Palette.Tokens(ambiance)
+        Button(action: choose) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(tokens.ground)
+                    Circle().fill(tokens.accent).padding(5)
+                    Circle().strokeBorder(tokens.accentLine, lineWidth: 1.5)
+                }
+                .frame(width: 28, height: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ambiance.title)
+                        .font(TypeScale.ui)
+                        .foregroundStyle(Palette.ink)
+                    Text(ambiance.detail)
+                        .font(TypeScale.meta)
+                        .foregroundStyle(Palette.inkFaint)
+                }
+                Spacer()
+                if chosen {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Palette.accentInk)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(chosen ? .isSelected : [])
     }
 }

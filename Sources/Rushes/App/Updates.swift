@@ -2,8 +2,9 @@ import AppKit
 import Foundation
 
 /// Rushes › Rechercher une mise à jour…: asks GitHub for the published
-/// releases, only when that menu is chosen. Nothing else in the app touches
-/// the network, and this never runs by itself (decided 2026-10-01, rather
+/// releases, only when that menu is chosen. The only other time the app
+/// touches the network is a send to a server set up in Réglages › Envoi
+/// (`Upload`), and this never runs by itself (decided 2026-10-01, rather
 /// than Sparkle: no dependency, no signing key to keep, nothing in the
 /// background). It only says; the person downloads the new .dmg.
 enum UpdateCheck {

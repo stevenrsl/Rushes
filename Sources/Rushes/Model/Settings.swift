@@ -30,8 +30,14 @@ struct IngestSettings: Codable, Hashable, Sendable {
     /// Off, a card kept for a five day shoot is copied again every night under
     /// new numbers.
     var skipAlreadyCopied = true
-    var ejectWhenDone = true
+    /// What happens to the cards told "formatable": ejected, as Steven
+    /// works, left in the reader, or offered a format from the done page.
+    /// Saved before 2026-10-15 as `ejectWhenDone`, still read.
+    var whenDone = WhenDone.eject
     var appearance = Appearance.system
+    /// The hues of the whole app, and the face of its titles.
+    var ambiance = Ambiance.forest
+    var titles = TitleFace.serif
     /// Letters chosen by hand, by camera.
     var cameras: [KnownCamera] = []
     /// Paths of the drives last used, first one first.
@@ -45,6 +51,11 @@ struct IngestSettings: Codable, Hashable, Sendable {
     /// An ASC MHL beside each shoot, for a DIT or a post house. Off: it is
     /// one more folder in every shoot, which a solo shooter may never open.
     var writeMHL = false
+    /// A copy sent once the backup is verified: a cloud folder or an FTP
+    /// server. None by default. Its password is in the keychain, never here.
+    var upload = UploadTarget()
+    /// Sends by itself at the end of a backup. Off: a button on the done page.
+    var uploadWhenDone = false
     /// What was saved knows which changes it has already seen. Settings
     /// written before this existed read as 0.
     var schema = IngestSettings.schema
@@ -70,14 +81,22 @@ struct IngestSettings: Codable, Hashable, Sendable {
         sharedCounter = try c.decodeIfPresent(Bool.self, forKey: .sharedCounter) ?? d.sharedCounter
         kindChoices = try c.decodeIfPresent([String: Bool].self, forKey: .kindChoices) ?? d.kindChoices
         skipAlreadyCopied = try c.decodeIfPresent(Bool.self, forKey: .skipAlreadyCopied) ?? d.skipAlreadyCopied
-        ejectWhenDone = try c.decodeIfPresent(Bool.self, forKey: .ejectWhenDone) ?? d.ejectWhenDone
+        if let when = try c.decodeIfPresent(WhenDone.self, forKey: .whenDone) {
+            whenDone = when
+        } else if let eject = try decoder.container(keyedBy: LegacyKeys.self).decodeIfPresent(Bool.self, forKey: .ejectWhenDone) {
+            whenDone = eject ? .eject : .keep
+        }
         appearance = try c.decodeIfPresent(Appearance.self, forKey: .appearance) ?? d.appearance
+        ambiance = try c.decodeIfPresent(Ambiance.self, forKey: .ambiance) ?? d.ambiance
+        titles = try c.decodeIfPresent(TitleFace.self, forKey: .titles) ?? d.titles
         cameras = try c.decodeIfPresent([KnownCamera].self, forKey: .cameras) ?? d.cameras
         destinations = try c.decodeIfPresent([String].self, forKey: .destinations) ?? d.destinations
         recentClients = try c.decodeIfPresent([String].self, forKey: .recentClients) ?? d.recentClients
         recentProjects = try c.decodeIfPresent([String].self, forKey: .recentProjects) ?? d.recentProjects
         measuredThroughput = try c.decodeIfPresent(Double.self, forKey: .measuredThroughput) ?? d.measuredThroughput
         writeMHL = try c.decodeIfPresent(Bool.self, forKey: .writeMHL) ?? d.writeMHL
+        upload = try c.decodeIfPresent(UploadTarget.self, forKey: .upload) ?? d.upload
+        uploadWhenDone = try c.decodeIfPresent(Bool.self, forKey: .uploadWhenDone) ?? d.uploadWhenDone
         schema = try c.decodeIfPresent(Int.self, forKey: .schema) ?? 0
     }
 
@@ -93,6 +112,26 @@ struct IngestSettings: Codable, Hashable, Sendable {
         if schema < 2 { skipAlreadyCopied = true }
         schema = Self.schema
         return true
+    }
+
+    /// Keys no longer written, read so an older choice is kept.
+    private enum LegacyKeys: String, CodingKey {
+        case ejectWhenDone
+    }
+
+    /// The cards that may be formatted, once the backup is verified. A card
+    /// told "ne pas formater" is never ejected nor offered a format, whatever
+    /// this says.
+    enum WhenDone: String, Codable, CaseIterable, Identifiable, Sendable {
+        case eject, keep, offerFormat
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .eject: "Les éjecter"
+            case .keep: "Les laisser branchées"
+            case .offerFormat: "Proposer de les formater"
+            }
+        }
     }
 
     /// Night is the use; the Mac may still be set to light at 3 in the morning.
