@@ -157,7 +157,10 @@ enum Palette {
     /// Something did not make it. Cairn's sea thrift, the colour of listening
     /// there and of a failed copy here: both mean "look now".
     static let alert = dynamic(oklch(0.54, 0.135, 12), oklch(0.74, 0.120, 12))
-    static let alertSoft = dynamic(oklch(0.93, 0.035, 12), oklch(0.32, 0.050, 12))
+    /// The soft signals are washes under their own colour (`StatusPill`): peat
+    /// on `lateSoft` 5.07:1 light, 5.59:1 dark; sea thrift on `alertSoft`
+    /// 4.66:1 light, 5.33:1 dark (at 0.93 it fell to 4.37:1).
+    static let alertSoft = dynamic(oklch(0.95, 0.025, 12), oklch(0.32, 0.050, 12))
 
     // MARK: Cameras
 

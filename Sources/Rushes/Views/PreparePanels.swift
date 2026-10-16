@@ -46,11 +46,20 @@ struct ShootBlock: View {
                     ingest.fixedDay = ShootDay(date: .now, cutoffHour: ingest.settings.dayCutoffHour)
                 }
             } label: {
-                Text(dayLabel)
-                    .font(TypeScale.ui)
-                    .foregroundStyle(Palette.ink)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // The chevrons say it is a choice: in a field's chrome, the day
+                // alone read as text to type over.
+                HStack(spacing: 6) {
+                    Text(dayLabel)
+                        .font(TypeScale.ui)
+                        .foregroundStyle(Palette.ink)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Palette.inkFaint)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(Rectangle())
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
@@ -157,12 +166,17 @@ struct DrivesBlock: View {
                     .disabled(ingest.isCopying || ingest.isUploading)
                     .help("Une copie vers iCloud Drive, Dropbox, un NAS ou un serveur, lue sur le premier disque une fois la sauvegarde vérifiée.")
                 }
+            }
+            // A line of its own: squeezed beside the two links it wrapped into
+            // a narrow column of its own.
+            if !ingest.drives.isEmpty {
                 Text(ingest.drives.count > 1
                      ? "La carte est lue une fois et écrite sur chaque disque en même temps."
                      : "Avec un second disque, tu as une vraie sauvegarde pour le même temps.")
                     .font(TypeScale.micro)
                     .foregroundStyle(Palette.inkFaint)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, -6)
             }
         }
     }
@@ -202,17 +216,10 @@ private struct DriveRow: View {
                     .font(TypeScale.meta)
                     .foregroundStyle(tight || !drive.isOnline ? Palette.late : Palette.inkFaint)
                     .monospacedDigit()
-                Button {
+                RemoveButton(help: "Ne plus copier ici", accessibility: "Ne plus copier sur « \(drive.name) »") {
                     ingest.removeDrive(drive)
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Palette.inkFaint)
                 }
-                .buttonStyle(.plain)
                 .disabled(ingest.isCopying)
-                .help("Ne plus copier ici")
-                .accessibilityLabel("Ne plus copier sur « \(drive.name) »")
             }
             if drive.isOnline, let total = drive.total, let free = drive.available, total > 0 {
                 Bar(fraction: Double(total - free) / Double(total), height: 4, fill: Palette.hairlineStrong,
@@ -220,7 +227,9 @@ private struct DriveRow: View {
                     .frame(maxWidth: 360)
                     .padding(.leading, 25)
             }
-            Text(drive.url.path)
+            // The home folder as ~: a folder on the Mac's own disk read as a
+            // wall of /Users/… before its name.
+            Text((drive.url.path as NSString).abbreviatingWithTildeInPath)
                 .font(TypeScale.micro)
                 .foregroundStyle(Palette.inkFaint)
                 .lineLimit(1)
@@ -277,17 +286,10 @@ private struct SendRow: View {
                         .font(TypeScale.meta)
                         .foregroundStyle(Palette.late)
                 }
-                Button {
+                RemoveButton(help: "Ne plus envoyer de copie", accessibility: "Ne plus envoyer de copie vers « \(target.name) »") {
                     ingest.settings.upload.kind = .none
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Palette.inkFaint)
                 }
-                .buttonStyle(.plain)
                 .disabled(ingest.isCopying || ingest.isUploading)
-                .help("Ne plus envoyer de copie")
-                .accessibilityLabel("Ne plus envoyer de copie vers « \(target.name) »")
             }
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(detail)
@@ -354,9 +356,13 @@ struct NamingBlock: View {
                 ForEach(NamePreset.allCases) { p in
                     Chip(text: p.title, selected: preset == p) { ingest.settings.namePattern = p.pattern }
                 }
-                // Not a choice: it lights up when the pattern is edited.
-                Chip(text: "Personnalisé", selected: preset == nil) {}
-                    .allowsHitTesting(false)
+                // Not a choice: it shows only once the pattern is edited, lit.
+                // Always there and unlit, it looked like a preset that would
+                // not answer a click.
+                if preset == nil {
+                    Chip(text: "Personnalisé", selected: true) {}
+                        .allowsHitTesting(false)
+                }
             }
             .onChange(of: ingest.settings.namePattern, initial: true) { _, pattern in
                 if let matched = NamePreset.matching(pattern) { basePreset = matched }

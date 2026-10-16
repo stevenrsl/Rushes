@@ -56,6 +56,7 @@ private struct NamingSettings: View {
                         ? "Le jour change à minuit"
                         : "Une prise avant \(ingest.settings.dayCutoffHour) h compte pour la veille")
                 }
+            } footer: {
                 Help("Un tournage qui finit à 2 h du matin garde la date du jour où il a commencé.")
             }
 
@@ -81,6 +82,7 @@ private struct NamingSettings: View {
                         .help("Modèles de dossier")
                     }
                 }
+            } footer: {
                 Help("Mêmes jetons que le nom, « / » pour un sous-dossier : {CLIENT}/{YYMMDD}_{PROJET} range chaque client à part. Vide : directement dans la destination.")
             }
 
@@ -97,13 +99,17 @@ private struct NamingSettings: View {
                             .labelsHidden()
                     }
                 }
+                LabeledContent("Exemple") {
+                    Text(example)
+                        .font(TypeScale.code)
+                        .foregroundStyle(Palette.accentInk)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                        .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
+                }
+            } footer: {
                 Help((FolderPreset.matching(ingest.settings.layout)?.detail ?? "Un dossier par type, avec les jetons du nom : {CAM} pour la lettre de la carte, {HHMMSS} pour l'heure.") + " Les métadonnées suivent leur fichier. Vide : dans le dossier du tournage.")
-                Text(example)
-                    .font(TypeScale.code)
-                    .foregroundStyle(Palette.accentInk)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
             }
 
             Section {
@@ -113,6 +119,7 @@ private struct NamingSettings: View {
                     }
                 }
                 Toggle("Un seul compteur pour les photos et les vidéos", isOn: $ingest.settings.sharedCounter)
+            } footer: {
                 Help("Les numéros suivent l'ordre des prises, toutes cartes confondues, et reprennent après le plus haut déjà présent sur les disques pour le même jour, client et projet. Avec {CAM} dans le nom, chaque caméra compte de son côté.")
             }
         }
@@ -214,11 +221,13 @@ private struct CopySettings: View {
                     Button("Rétablir les choix par défaut") { ingest.settings.kindChoices = [:] }
                         .disabled(ingest.settings.kindChoices.isEmpty)
                 }
+            } footer: {
                 Help("Les types se cochent dans le bloc Fichiers de la page, et le choix est retenu. Par défaut tout est copié sauf les proxys, les vignettes de l'appareil et les XML. Une métadonnée prend le nom de son fichier : C0001M01.XML devient …_0001M01.XML à côté de …_0001.MP4.")
             }
 
             Section {
                 Toggle("Ignorer ce qui est déjà sauvegardé sur chaque disque", isOn: $ingest.settings.skipAlreadyCopied)
+            } footer: {
                 Help("Une prise n'est ignorée que si le relevé la liste et qu'elle est encore là, à la bonne taille, sur chaque disque : un fichier trié, déplacé ou disparu est recopié. Rushes ne remplace jamais un fichier sur un disque.")
             }
 
@@ -226,11 +235,13 @@ private struct CopySettings: View {
                 Picker("À la fin, les cartes formatables", selection: $ingest.settings.whenDone) {
                     ForEach(IngestSettings.WhenDone.allCases) { Text($0.title).tag($0) }
                 }
+            } footer: {
                 Help(whenDoneHelp)
             }
 
             Section {
                 Toggle("Écrire un ASC MHL dans chaque tournage", isOn: $ingest.settings.writeMHL)
+            } footer: {
                 Help("Le format de liste de hashs que lisent les DIT, Silverstack et les post-productions. Chaque sauvegarde ajoute une génération dans un dossier ascmhl, à côté des fichiers, sans jamais réécrire les précédentes. Le relevé de Rushes, lui, est toujours écrit.")
             }
         }
@@ -265,6 +276,7 @@ private struct UploadSettings: View {
                 Picker("Envoyer une copie vers", selection: $ingest.settings.upload.kind) {
                     ForEach(UploadTarget.Kind.allCases) { Text($0.title).tag($0) }
                 }
+            } footer: {
                 Help("Une fois la sauvegarde vérifiée sur les disques, Rushes peut en envoyer une copie ailleurs. Elle est lue sur le premier disque, jamais sur la carte, et le verdict des cartes ne l'attend pas : les disques restent la sauvegarde.")
             }
 
@@ -283,6 +295,7 @@ private struct UploadSettings: View {
                             Button("Choisir…") { chooseFolder() }
                         }
                     }
+                } footer: {
                     Help("Le dossier qu'iCloud Drive, Dropbox, Google Drive, OneDrive ou un NAS monté synchronise. Chaque copie y est relue avant d'être nommée ; leur app l'envoie ensuite en ligne à son rythme, et c'est elle qui dit quand c'est fait.")
                 }
             case .ftp, .ftps:
@@ -303,6 +316,7 @@ private struct UploadSettings: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
+                } footer: {
                     Help("Les tournages y sont rangés comme sur les disques. Chaque fichier est envoyé sous un nom caché, renommé une fois complet, puis sa taille est demandée au serveur. Un fichier déjà là à sa taille n'est pas renvoyé, et rien n'est jamais remplacé. Le mot de passe est gardé dans le trousseau du Mac." + (target.kind == .ftp ? " En FTP simple, il passe en clair sur le réseau : préfère FTPS si le serveur le propose." : ""))
                 }
             }
@@ -310,6 +324,7 @@ private struct UploadSettings: View {
             if target.kind != .none {
                 Section {
                     Toggle("Envoyer dès la fin de chaque sauvegarde", isOn: $ingest.settings.uploadWhenDone)
+                } footer: {
                     Help("Sinon, la page de fin propose « Envoyer ». Le Mac ne se met pas en veille pendant l'envoi.")
                 }
             }
@@ -377,9 +392,13 @@ private struct AppearanceSettings: View {
                 Picker("Apparence", selection: $ingest.settings.appearance) {
                     ForEach(IngestSettings.Appearance.allCases) { Text($0.title).tag($0) }
                 }
-                Text("Sauvegarde vérifiée")
-                    .font(TypeScale.title)
-                    .foregroundStyle(Palette.ink)
+                // Labelled: alone at the foot of the section it read as a
+                // stray heading rather than the titles' preview.
+                LabeledContent("Aperçu") {
+                    Text("Sauvegarde vérifiée")
+                        .font(TypeScale.title)
+                        .foregroundStyle(Palette.ink)
+                }
             }
         }
         .formStyle(.grouped)

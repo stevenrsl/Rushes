@@ -327,6 +327,7 @@ extension ButtonStyle where Self == AccentFilledStyle {
 struct ForestCheckbox: View {
     let checked: Bool
     let toggle: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: toggle) {
@@ -341,6 +342,8 @@ struct ForestCheckbox: View {
                 }
             }
             .frame(width: 15, height: 15)
+            // Held while a backup runs: it should not look like it can be ticked.
+            .opacity(isEnabled ? 1 : 0.45)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -376,6 +379,45 @@ struct Chip: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The small cross that takes a line off a list: drawn small, clicked large.
+/// At its drawn size it was an 8 pt target, a miss at 3 in the morning.
+struct RemoveButton: View {
+    let help: String
+    let accessibility: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Palette.inkFaint)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(accessibility)
+    }
+}
+
+/// A state in a word, on a pale wash of its own colour: "À vérifier",
+/// "Formatable". Read at a glance down a list, where coloured text alone was
+/// the size of a footnote.
+struct StatusPill: View {
+    let text: String
+    let ink: Color
+    let fill: Color
+
+    var body: some View {
+        Text(text)
+            .font(TypeScale.group)
+            .foregroundStyle(ink)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(fill))
     }
 }
 

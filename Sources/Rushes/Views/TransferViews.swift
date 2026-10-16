@@ -300,17 +300,17 @@ private struct VerdictRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
+            // One width for every icon, so the names and sentences line up.
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(verdict.cardName)
                         .font(TypeScale.ui)
                         .foregroundStyle(Palette.ink)
-                    Text(verdict.title)
-                        .font(TypeScale.micro)
-                        .foregroundStyle(tint)
+                    StatusPill(text: verdict.title, ink: tint, fill: wash)
                 }
                 Text(verdict.sentence)
                     .font(TypeScale.meta)
@@ -349,6 +349,14 @@ private struct VerdictRow: View {
         case .safe: Palette.accentInk
         case .check: Palette.late
         case .hold: Palette.alert
+        }
+    }
+
+    private var wash: Color {
+        switch verdict.level {
+        case .safe: Palette.accentSoft
+        case .check: Palette.lateSoft
+        case .hold: Palette.alertSoft
         }
     }
 }

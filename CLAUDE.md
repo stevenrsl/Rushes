@@ -281,6 +281,11 @@ button, `.accentLink` for the rest, a drawn checkbox, the wash at the top, `late
   their track 3.17:1.
 - **Quiet copy.** At most one middle dot a line; sentences rather than lists of fragments; no
   em dash anywhere. The camera's "lettre retenue" is in the badge's tooltip, not a line of its own.
+- **Signals in a list** (2026-10-16): a card's verdict is a `StatusPill`, its colour on a wash
+  of itself (`lateSoft`, `alertSoft`, `accentSoft`, all measured at 4.5:1 or more), icons in a
+  column of one width. A small cross is a `RemoveButton`, 22 pt to click. A control held while
+  copying looks held (the checkbox, "Ajouter un dossier…"). Settings say their help in the
+  section's footer, never as a row of the section.
 - **States**: "Lecture des cartes…" while scanning, "Préparation de l'aperçu…" while the plan is
   made, rather than a false "rien à copier".
 

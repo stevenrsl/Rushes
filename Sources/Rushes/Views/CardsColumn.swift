@@ -41,9 +41,12 @@ private struct EmptyCards: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Palette.inkSoft)
             }
+            // A sidebar row keeps to one line unless told otherwise; this one
+            // was cut at "quelle que…".
             Text("Elle apparaît ici toute seule, quelle que soit la marque de l'appareil.")
                 .font(TypeScale.meta)
                 .foregroundStyle(Palette.inkFaint)
+                .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.vertical, 4)
@@ -155,6 +158,7 @@ private struct Footer: View {
             }
             .buttonStyle(.plain)
             .disabled(ingest.isCopying)
+            .opacity(ingest.isCopying ? 0.45 : 1)
             .help("Une carte que le Mac ne reconnaît pas, ou un appareil branché en stockage de masse")
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
