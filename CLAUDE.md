@@ -333,8 +333,10 @@ up in Réglages › Envoi. No telemetry, nothing in the background (2026-10-01).
 
 **The send comes after the backup, never instead of it** (asked 2026-10-15). Réglages › Envoi
 names one target: a folder the Mac syncs (iCloud Drive, Dropbox, Google Drive, a NAS) or an
-FTP/FTPS server. It runs by itself at the end (`uploadWhenDone`) or from "Envoyer" on the done
-page, holds its own `ProcessInfo` activity, and quitting asks and waits for curl to stop.
+FTP/FTPS server. The preparation page shows it under the drives in Destinations (`SendRow`,
+2026-10-16): the synced folder is chosen there and "à la fin / sur demande" switched there, while a
+server's address and password stay in the settings, opened on that tab. It runs by itself at the
+end (`uploadWhenDone`) or from "Envoyer" on the done page, holds its own `ProcessInfo` activity, and quitting asks and waits for curl to stop.
 `Upload.items` lists what the backup verified plus the night's `_RUSHES` records, read from the
 first drive still plugged in, never from the card. The drives' rules hold on the other side: a
 hidden `.<name>.rushes-partial` named only once whole (`Copier.name` in a folder, curl's

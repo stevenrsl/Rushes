@@ -108,9 +108,17 @@ private struct RecentField: View {
     }
 }
 
-/// The drives the cards go to. Two is a backup; one is a copy.
+/// The drives the cards go to. Two is a backup; one is a copy. Below them, the
+/// copy sent elsewhere once they are verified, which is never one of them.
 struct DrivesBlock: View {
     @Environment(Ingest.self) private var ingest
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(SettingsView.tabKey) private var settingsTab = SettingsView.Tab.naming
+
+    private func openUploadSettings() {
+        settingsTab = .upload
+        openSettings()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -123,11 +131,32 @@ struct DrivesBlock: View {
             ForEach(ingest.drives) { drive in
                 DriveRow(drive: drive, incoming: ingest.plan.bytesToCopy)
             }
+            if ingest.settings.upload.kind != .none {
+                SendRow()
+            }
             HStack(alignment: .firstTextBaseline, spacing: 16) {
                 Button(ingest.drives.isEmpty ? "Choisir un disque…" : "Ajouter un disque…") { chooseDrive() }
                     .buttonStyle(.accentLink)
                     .font(TypeScale.meta)
                     .disabled(ingest.isCopying)
+                if ingest.settings.upload.kind == .none, !ingest.drives.isEmpty {
+                    Menu("Envoyer aussi ailleurs…") {
+                        Button("Un dossier synchronisé…") {
+                            if let folder = chooseUploadFolder() {
+                                ingest.settings.upload.folder = folder
+                                ingest.settings.upload.kind = .folder
+                            }
+                        }
+                        Button("Un serveur FTP ou FTPS…") { openUploadSettings() }
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.accentLink)
+                    .menuIndicator(.hidden)
+                    .font(TypeScale.meta)
+                    .fixedSize()
+                    .disabled(ingest.isCopying || ingest.isUploading)
+                    .help("Une copie vers iCloud Drive, Dropbox, un NAS ou un serveur, lue sur le premier disque une fois la sauvegarde vérifiée.")
+                }
                 Text(ingest.drives.count > 1
                      ? "La carte est lue une fois et écrite sur chaque disque en même temps."
                      : "Avec un second disque, tu as une vraie sauvegarde pour le même temps.")
@@ -208,6 +237,106 @@ private struct DriveRow: View {
         guard let free = drive.available else { return "" }
         return "\(Format.bytes(free)) libres"
     }
+}
+
+/// The copy sent elsewhere, laid out as a drive is: what it is, when it goes.
+/// A server's address and password stay in Réglages › Envoi.
+private struct SendRow: View {
+    @Environment(Ingest.self) private var ingest
+    @Environment(\.openSettings) private var openSettings
+    @AppStorage(SettingsView.tabKey) private var settingsTab = SettingsView.Tab.naming
+
+    var body: some View {
+        let target = ingest.settings.upload
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 9) {
+                Image(systemName: target.isServer ? "server.rack" : "icloud.and.arrow.up")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(target.isReady ? Palette.inkSoft : Palette.late)
+                    .frame(width: 16)
+                Text(target.isReady ? target.name : target.kind.title)
+                    .font(TypeScale.ui)
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                if target.isReady {
+                    Menu {
+                        Button("Dès la fin de la sauvegarde") { ingest.settings.uploadWhenDone = true }
+                        Button("Quand je le demande, depuis la page de fin") { ingest.settings.uploadWhenDone = false }
+                    } label: {
+                        Text(ingest.settings.uploadWhenDone ? "Envoyé à la fin" : "Sur demande")
+                            .font(TypeScale.meta)
+                            .foregroundStyle(Palette.inkFaint)
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .help("Quand la copie part. Elle est lue sur le premier disque une fois la sauvegarde vérifiée, jamais sur la carte, et le verdict des cartes ne l'attend pas.")
+                } else {
+                    Text("À régler")
+                        .font(TypeScale.meta)
+                        .foregroundStyle(Palette.late)
+                }
+                Button {
+                    ingest.settings.upload.kind = .none
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Palette.inkFaint)
+                }
+                .buttonStyle(.plain)
+                .disabled(ingest.isCopying || ingest.isUploading)
+                .help("Ne plus envoyer de copie")
+                .accessibilityLabel("Ne plus envoyer de copie vers « \(target.name) »")
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(detail)
+                    .font(TypeScale.micro)
+                    .foregroundStyle(Palette.inkFaint)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Button(target.isServer ? "Réglages…" : "Changer…") {
+                    if target.isServer {
+                        settingsTab = .upload
+                        openSettings()
+                    } else if let folder = chooseUploadFolder() {
+                        ingest.settings.upload.folder = folder
+                    }
+                }
+                .buttonStyle(.accentLink)
+                .font(TypeScale.micro)
+                .disabled(ingest.isCopying || ingest.isUploading)
+            }
+            .padding(.leading, 25)
+        }
+    }
+
+    private var detail: String {
+        let target = ingest.settings.upload
+        switch target.kind {
+        case .none: return ""
+        case .folder: return target.folder.isEmpty ? "Aucun dossier choisi" : target.folder
+        case .ftp, .ftps:
+            guard target.isReady else { return "Aucun serveur indiqué" }
+            let scheme = target.kind == .ftps ? "ftps://" : "ftp://"
+            let user = target.user.isEmpty ? "" : target.user + "@"
+            let path = target.path.isEmpty ? "" : "/" + target.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return scheme + user + target.serverHost + path
+        }
+    }
+}
+
+/// The synced folder a copy is sent to, chosen where the sync apps keep theirs.
+@MainActor
+func chooseUploadFolder() -> String? {
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.canCreateDirectories = true
+    panel.prompt = "Choisir"
+    panel.message = "Le dossier synchronisé où Rushes envoie une copie des tournages."
+    panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/CloudStorage")
+    return panel.runModal() == .OK ? panel.url?.path : nil
 }
 
 /// How files are named, with the name they will get in front of you.

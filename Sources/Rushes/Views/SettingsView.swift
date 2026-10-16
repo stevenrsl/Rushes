@@ -3,18 +3,29 @@ import SwiftUI
 
 /// What changes rarely, in tabs as Cairn's settings are.
 struct SettingsView: View {
+    enum Tab: String { case naming, cameras, copy, upload, appearance }
+
+    /// Kept so the preparation page can open the window on the tab it means.
+    static let tabKey = "settingsTab"
+    @AppStorage(SettingsView.tabKey) private var tab = Tab.naming
+
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             NamingSettings()
                 .tabItem { Label("Rangement", systemImage: "folder") }
+                .tag(Tab.naming)
             CameraSettings()
                 .tabItem { Label("Caméras", systemImage: "camera") }
+                .tag(Tab.cameras)
             CopySettings()
                 .tabItem { Label("Copie", systemImage: "externaldrive") }
+                .tag(Tab.copy)
             UploadSettings()
                 .tabItem { Label("Envoi", systemImage: "icloud.and.arrow.up") }
+                .tag(Tab.upload)
             AppearanceSettings()
                 .tabItem { Label("Apparence", systemImage: "paintpalette") }
+                .tag(Tab.appearance)
         }
         .frame(width: 540)
         .tint(Palette.accentLine)
@@ -338,16 +349,7 @@ private struct UploadSettings: View {
     }
 
     private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Choisir"
-        panel.message = "Le dossier synchronisé où Rushes envoie une copie des tournages."
-        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/CloudStorage")
-        if panel.runModal() == .OK, let url = panel.url {
-            ingest.settings.upload.folder = url.path
-        }
+        if let folder = chooseUploadFolder() { ingest.settings.upload.folder = folder }
     }
 }
 
