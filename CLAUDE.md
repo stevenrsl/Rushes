@@ -15,7 +15,7 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ./build.sh                                          # release build → build/Rushes.app
 ./build.sh debug
 ./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
-swift test --scratch-path /tmp/rushes-build         # 105 tests; a bench and snapshots skipped unless asked
+swift test --scratch-path /tmp/rushes-build         # 114 tests; a bench and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
@@ -33,8 +33,16 @@ copying, is what makes a rebuild after a run work at all.
 
 ## The rules that shape everything
 
-**A card is only ever read.** Nothing is moved, renamed, written or deleted on a card, ever.
-Formatting is the camera's job, once the backup is verified.
+**A card is only ever read.** Nothing is moved, renamed, written or deleted on a card, ever,
+by the backup. Formatting is the camera's job, once the backup is verified, with one door Steven
+opened on 2026-10-15: with Copie › "À la fin, les cartes formatables" set to "Proposer de les
+formater", the done page offers "Formater…" on each card told formatable, one at a time, after a
+destructive confirmation (`Ingest.format`, `VolumeWatcher.format`). Everything is checked again
+at that moment: the card's volume serial is the one read before the backup (`Card.identity`,
+`verifiedIdentities`, since two cards swapped in a reader mount at the same path), it is still
+mounted there, it is ejectable or removable media, it is not a destination, and it is exFAT or
+FAT. Then `diskutil eraseVolume` with its own file system and name, and an eject. Never a card
+"à vérifier" or "ne pas formater", never by itself, never several at once.
 
 **Nothing on a drive is ever replaced.** A copy is written as `.<name>.rushes-partial` beside
 its final name, read back, and named only if it matches, with `renamex_np(…, RENAME_EXCL)`.
@@ -57,7 +65,8 @@ copying. Before any of this is shown, every drive is synced whole with
 `sync_volume_np(FULLSYNC | WAIT)`, falling back to `F_FULLFSYNC` (`Journal.flushDevice`): each
 copy was fsynced before it was named, and on exFAT the folder entries holding the names can sit
 in the Mac's cache for half a minute (council of 2026-09-28). The sentence "tu peux formater"
-exists nowhere else, and never for all the cards at once.
+exists nowhere else, and never for all the cards at once; the format offered from the done
+page follows it card by card.
 
 **Verified means read back from the drive.** The card is read once in 8 MB chunks; each chunk
 is hashed (XXH64) and written to every drive in parallel while the next is read. Each drive's
@@ -126,18 +135,21 @@ Sources/Rushes/
               Diagnostic (a card described for a beta tester to send)
   Transfer/   XXHash64, Copier (one file, every drive, checked), Backup (a whole plan +
               manifests), Audit (a drive read back against its records), Volumes (mount
-              watching, free space, file system, eject)
+              watching, free space, file system, eject, the guarded format), Upload (the copy
+              sent elsewhere: a synced folder or FTP/FTPS through curl, Keychain)
   App/        RushesApp (+ AppDelegate: quitting mid-backup is asked), Ingest (the observable
               model: cards, drives, plan, backup, notifications, sleep assertion), Feedback
               (the Aide menu: describe a card, report a problem, write)
-  Design/     Palette (Cairn's tokens, forest in pastel, TypeScale, Radius), Components (Cairn's
+  Design/     Palette (Cairn's tokens per Ambiance, forest in pastel, TypeScale, Radius, Theme),
+              Components (Cairn's
               page frame, PageTrail, PageSection, Field, chips, accent buttons, checkbox)
   Views/      RootView (+ PrepareView, ActionBar), CardsColumn, PreparePanels (shoot, drives,
-              naming blocks), PreviewTable, TransferViews (copying, done), SettingsView (tabs),
+              naming blocks), PreviewTable, TransferViews (copying, done, sending), SettingsView
+              (tabs: Rangement, Caméras, Copie, Envoi, Apparence),
               AuditView (+ AuditModel, its own window)
 Tests/        Swift Testing: hash, grouping per brand, naming, planner, backup, copier edges,
               scanner, journal, verdicts, readiness, report, audit, ASC MHL, file systems
-              (hdiutil exFAT/FAT32 images), camera letters
+              (hdiutil exFAT/FAT32 images), camera letters, settings, upload
 Tools/        make-icon.swift, make-test-card.swift
 docs/         the council's notes (French), relecture.md (the guide for an outside review of the core)
 ```
@@ -272,10 +284,20 @@ button, `.accentLink` for the rest, a drawn checkbox, the wash at the top, `late
 - **States**: "Lecture des cartes…" while scanning, "Préparation de l'aperçu…" while the plan is
   made, rather than a false "rien à copier".
 
-The icon is drawn from the same colours (`Tools/make-icon.swift`).
+- **Ambiances** (asked 2026-10-15, "custom l'ambiance graphique"): Réglages › Apparence offers
+  Forêt (the original, number for number), Océan, Lavande and Ardoise, and titles with or
+  without serifs. Presets, not a colour picker, because a pastel picked by hand cannot be
+  promised to carry text. Each `Ambiance` moves the hues of `Palette.Tokens` and keeps their
+  lightness; all four were measured like the forest (worst: `inkFaint` on `groundSunk` 4.64:1,
+  `alert` on `groundSunk` 4.50:1, within sRGB). `late`, `alert` and the camera hues are the same
+  in every ambiance. The tokens are read through `Theme.shared`, an `@Observable`, so a change
+  redraws every window; `Ingest` keeps it equal to the settings.
 
-**Support is asked in one place.** Rushes is free; the About window (`Support/Credits.rtf`), the
-README and `.github/FUNDING.yml` say how to support it (GitHub Sponsors, Ko-fi). Never on the
+The icon is drawn from the same colours (`Tools/make-icon.swift`), always the forest.
+
+**Support is asked in one place.** Rushes is free; the About window (`Support/Credits.rtf`, Ko-fi
+only since 2026-10-15, Steven's request), the README and `.github/FUNDING.yml` (GitHub Sponsors
+and Ko-fi) say how to support it. Never on the
 preparation page nor while copying, and not on the done page during the beta (Steven,
 2026-10-01). The credits set no colour, so dark mode reads them.
 
@@ -296,7 +318,8 @@ the night). What it cannot hold back it says anyway, in the same line. These rul
 
 The backup holds a `ProcessInfo` activity: the Mac does not idle-sleep (the screen may). A
 notification with sound says when it is done ("Tu peux aller dormir"); cards read whole and
-verified are ejected, the others never. Quitting mid-backup asks, then stops the copy and waits
+verified are ejected, the others never (or left in, or offered a format: `settings.whenDone`,
+which replaced the `ejectWhenDone` switch on 2026-10-15 and still reads it). Quitting mid-backup asks, then stops the copy and waits
 for the record to be written. What was verified before a cancel, a failure, a quit or a crash is
 in the journal, so "Reprendre" copies only the rest, even with "Ignorer ce qui est déjà
 sauvegardé" off and even after the app was killed. A card left unticked does not hold the button
@@ -304,9 +327,24 @@ while it is read. Twenty seconds without a byte moving is said on the copying pa
 copy and a slow one look the same on a percentage. Appearance can be forced dark in Settings
 (Copie tab).
 
-Rushes touches the network once, when Rushes › Rechercher une mise à jour… is chosen
-(`UpdateCheck`): it reads GitHub's releases and says, nothing more. No telemetry, nothing in the
-background (2026-10-01). Distribution is direct, never the Mac App Store, whose sandbox would
+Rushes touches the network in two places only, both asked for: Rushes › Rechercher une mise à
+jour… (`UpdateCheck`) reads GitHub's releases and says, nothing more; and a send to a server set
+up in Réglages › Envoi. No telemetry, nothing in the background (2026-10-01).
+
+**The send comes after the backup, never instead of it** (asked 2026-10-15). Réglages › Envoi
+names one target: a folder the Mac syncs (iCloud Drive, Dropbox, Google Drive, a NAS) or an
+FTP/FTPS server. It runs by itself at the end (`uploadWhenDone`) or from "Envoyer" on the done
+page, holds its own `ProcessInfo` activity, and quitting asks and waits for curl to stop.
+`Upload.items` lists what the backup verified plus the night's `_RUSHES` records, read from the
+first drive still plugged in, never from the card. The drives' rules hold on the other side: a
+hidden `.<name>.rushes-partial` named only once whole (`Copier.name` in a folder, curl's
+post-quote `RNFR`/`RNTO` on a server), a name already taken at another size is a failure and
+never replaced, one at its size is "déjà là" and not sent twice. A folder copy is read back
+against the manifest's XXH64; a server is asked the size, all FTP can be held to. The verdicts
+neither wait for it nor depend on it. FTP goes through the Mac's `/usr/bin/curl`, so there is
+still no dependency; the password is in the keychain (`Keychain`, service
+`eu.stevenrsl.rushes.upload`) and reaches curl on its standard input, never its command line.
+SFTP is not offered: macOS's curl does not speak it. Distribution is direct, never the Mac App Store, whose sandbox would
 turn the cards' detection into an open panel per card: `build.sh release-signed` signs with
 the hardened runtime from `RUSHES_SIGN_IDENTITY`, notarises and staples the app then the
 `.dmg` with `RUSHES_NOTARY_PROFILE`, and asks Gatekeeper about a quarantined copy. The version

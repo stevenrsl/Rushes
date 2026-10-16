@@ -124,7 +124,7 @@ enum Copier {
     /// atomic too, and the copy is renamed over that reservation of ours. Cut
     /// off in between, it leaves an empty file, which the planner reads as a
     /// name already taken: a conflict, never a file that looks finished.
-    private static func name(_ partial: URL, _ target: URL) throws {
+    static func name(_ partial: URL, _ target: URL) throws {
         if renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 { return }
         let code = errno
         if code == EEXIST { throw appeared(target) }

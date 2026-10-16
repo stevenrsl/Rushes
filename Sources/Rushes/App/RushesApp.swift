@@ -54,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var ingest: Ingest?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        !(MainActor.assumeIsolated { ingest?.isCopying } ?? false)
+        !(MainActor.assumeIsolated { ingest.map { $0.isCopying || $0.isUploading } } ?? false)
     }
 
     /// Quitting in the middle of a backup is asked, not refused: the cable
@@ -63,6 +63,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// names their camera gave them. Quitting on the spot used to lose it.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let copying = MainActor.assumeIsolated { ingest?.isCopying } ?? false
+        let uploading = MainActor.assumeIsolated { ingest?.isUploading } ?? false
+        if !copying, uploading {
+            // The drives are complete; only the copy sent elsewhere stops.
+            let alert = NSAlert()
+            alert.messageText = "Un envoi est en cours"
+            alert.informativeText = "Quitter l'interrompt. Les disques, eux, sont complets, et le fichier en cours d'envoi garde un nom caché."
+            alert.addButton(withTitle: "Continuer l'envoi")
+            alert.addButton(withTitle: "Quitter")
+            guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+            MainActor.assumeIsolated {
+                ingest?.stopUploadForQuit { NSApp.reply(toApplicationShouldTerminate: true) }
+            }
+            return .terminateLater
+        }
         guard copying else { return .terminateNow }
         let alert = NSAlert()
         alert.messageText = "Une sauvegarde est en cours"

@@ -158,7 +158,14 @@ private struct ActionBar: View {
     /// One plain sentence: what will happen besides the copy.
     private var detail: String {
         var text = "Chaque copie est relue et vérifiée"
-        if ingest.settings.ejectWhenDone { text += ", les cartes sont éjectées à la fin" }
+        switch ingest.settings.whenDone {
+        case .eject: text += ", les cartes sont éjectées à la fin"
+        case .offerFormat: text += ", la fin propose de formater les cartes"
+        case .keep: break
+        }
+        if ingest.settings.uploadWhenDone, ingest.settings.upload.isReady {
+            text += ", et une copie part ensuite vers \(ingest.settings.upload.name)"
+        }
         if ingest.plan.alreadyCopied > 0 {
             text += ". \(Format.count(ingest.plan.alreadyCopied, "prise déjà sauvegardée", "prises déjà sauvegardées")), ignorée\(ingest.plan.alreadyCopied > 1 ? "s" : "")"
         }

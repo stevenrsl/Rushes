@@ -95,6 +95,8 @@ struct CopyingView: View {
 struct DoneView: View {
     @Environment(Ingest.self) private var ingest
     let report: BackupReport
+    /// The card whose format is being asked, until it is confirmed.
+    @State private var toFormat: Ingest.Card?
 
     var body: some View {
         PageScroll {
@@ -126,6 +128,9 @@ struct DoneView: View {
                             if let message = ingest.ejectMessage {
                                 fact("Cartes", message)
                             }
+                            ForEach(Array(ingest.formatMessages.enumerated()), id: \.offset) { _, message in
+                                fact("Formatage", message)
+                            }
                         }
                     }
 
@@ -133,7 +138,15 @@ struct DoneView: View {
                         PageSection(title: "Cartes") {
                             VStack(alignment: .leading, spacing: 12) {
                                 ForEach(ingest.verdicts) { verdict in
-                                    VerdictRow(verdict: verdict)
+                                    let card = ingest.formatableCards.first { $0.id == verdict.cardID }
+                                    VerdictRow(
+                                        verdict: verdict,
+                                        canFormat: card != nil,
+                                        formatting: ingest.formatting == verdict.cardID,
+                                        busy: ingest.formatting != nil
+                                    ) {
+                                        toFormat = card
+                                    }
                                 }
                             }
                         }
@@ -159,6 +172,10 @@ struct DoneView: View {
                         }
                     }
 
+                    if ingest.settings.upload.isReady {
+                        PageSection(title: "Envoi") { UploadBlock() }
+                    }
+
                     Rectangle().fill(Palette.hairline).frame(height: 1)
 
                     HStack(spacing: 20) {
@@ -170,6 +187,8 @@ struct DoneView: View {
                         .buttonStyle(.accentFilled)
                         .controlSize(.large)
                         .keyboardShortcut(.defaultAction)
+                        .disabled(ingest.isUploading || ingest.formatting != nil)
+                        .help(ingest.isUploading ? "Attends la fin de l'envoi, ou interromps-le" : "")
 
                         if !report.folders.isEmpty {
                             Button("Afficher dans le Finder") {
@@ -207,6 +226,18 @@ struct DoneView: View {
             }
             .padding(.top, Page.top)
             .padding(.bottom, 40)
+        }
+        .confirmationDialog(
+            "Formater « \(toFormat?.name ?? "") » ?",
+            isPresented: Binding(get: { toFormat != nil }, set: { if !$0 { toFormat = nil } }),
+            presenting: toFormat
+        ) { card in
+            Button("Formater « \(card.name) »", role: .destructive) {
+                Task { await ingest.format(card) }
+            }
+            Button("Annuler", role: .cancel) {}
+        } message: { _ in
+            Text("Tout ce qui est sur la carte est effacé, sans retour. Sa sauvegarde a été relue sur chaque disque. Elle garde son nom et son format, puis elle est éjectée.")
         }
     }
 
@@ -262,6 +293,10 @@ struct DoneView: View {
 /// what must not be formatted.
 private struct VerdictRow: View {
     let verdict: CardVerdict
+    var canFormat = false
+    var formatting = false
+    var busy = false
+    var format: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -282,8 +317,22 @@ private struct VerdictRow: View {
                     .foregroundStyle(Palette.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if canFormat || formatting {
+                Spacer(minLength: 16)
+                if formatting {
+                    ProgressView().controlSize(.small)
+                    Text("Formatage…")
+                        .font(TypeScale.meta)
+                        .foregroundStyle(Palette.inkSoft)
+                } else {
+                    Button("Formater…", action: format)
+                        .buttonStyle(.accentLink)
+                        .font(TypeScale.meta)
+                        .disabled(busy)
+                }
+            }
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("\(verdict.cardName), \(verdict.title). \(verdict.sentence)")
     }
 
@@ -301,5 +350,92 @@ private struct VerdictRow: View {
         case .check: Palette.late
         case .hold: Palette.alert
         }
+    }
+}
+
+/// The copy sent elsewhere once the drives are done: a button, a bar, then
+/// what came of it. The drives are the backup; this line never says otherwise.
+private struct UploadBlock: View {
+    @Environment(Ingest.self) private var ingest
+
+    var body: some View {
+        let name = ingest.settings.upload.name
+        VStack(alignment: .leading, spacing: 10) {
+            switch ingest.uploadPhase {
+            case .idle:
+                HStack(spacing: 16) {
+                    Text("Une copie de ce qui vient d'être vérifié peut partir vers \(name).")
+                        .font(TypeScale.meta)
+                        .foregroundStyle(Palette.inkSoft)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 12)
+                    Button("Envoyer") { ingest.startUpload() }
+                        .buttonStyle(.accentLink)
+                        .font(TypeScale.meta)
+                        .disabled(!ingest.canUpload)
+                }
+            case .sending:
+                let p = ingest.uploadProgress
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Envoi vers \(name) · \(Int((p.fraction * 100).rounded(.down))) %")
+                        .font(TypeScale.ui)
+                        .foregroundStyle(Palette.ink)
+                        .monospacedDigit()
+                    Spacer()
+                    Button("Interrompre") { ingest.cancelUpload() }
+                        .buttonStyle(.accentLink)
+                        .font(TypeScale.meta)
+                }
+                Bar(fraction: p.fraction)
+                HStack {
+                    Text("\(Format.number(p.filesDone)) / \(Format.count(p.filesTotal, "fichier"))")
+                        .font(TypeScale.meta)
+                        .foregroundStyle(Palette.inkSoft)
+                        .monospacedDigit()
+                    Spacer(minLength: 16)
+                    Text(p.current)
+                        .font(TypeScale.code)
+                        .foregroundStyle(Palette.inkFaint)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            case .finished(let report):
+                Text(sentence(report, name: name))
+                    .font(TypeScale.meta)
+                    .foregroundStyle(report.succeeded ? Palette.accentInk : report.cancelled ? Palette.late : Palette.alert)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(report.failures, id: \.self) { failure in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(failure.file).font(TypeScale.code).foregroundStyle(Palette.ink)
+                        Text(failure.message).font(TypeScale.meta).foregroundStyle(Palette.inkSoft)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if !report.succeeded {
+                    Button("Envoyer à nouveau") { ingest.startUpload() }
+                        .buttonStyle(.accentLink)
+                        .font(TypeScale.meta)
+                        .disabled(!ingest.canUpload)
+                }
+            }
+        }
+    }
+
+    private func sentence(_ report: UploadReport, name: String) -> String {
+        let done = report.sent + report.alreadyThere
+        if report.succeeded {
+            var text = "\(Format.count(done, "fichier")) sur \(name)"
+            if report.alreadyThere > 0, report.sent > 0 {
+                text += ", dont \(Format.number(report.alreadyThere)) déjà là"
+            }
+            return text + "."
+        }
+        if let stopped = report.stopped {
+            return "\(stopped) Les disques, eux, sont complets."
+        }
+        if report.cancelled {
+            return "Envoi interrompu après \(Format.count(report.sent, "fichier")). Envoyer à nouveau reprend là où il s'est arrêté."
+        }
+        return "\(Format.count(report.failures.count, "fichier")) n'\(report.failures.count > 1 ? "ont" : "a") pas pu partir vers \(name). Les disques, eux, sont complets."
     }
 }

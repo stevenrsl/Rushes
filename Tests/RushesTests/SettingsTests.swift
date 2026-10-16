@@ -60,6 +60,35 @@ struct SettingsTests {
         #expect(settings.skipAlreadyCopied)
     }
 
+    @Test("ejecting, saved as a switch before 2026-10-15, is still read")
+    func legacyEject() {
+        #expect(IngestSettings.load(from: defaults(#"{"ejectWhenDone":false}"#)).whenDone == .keep)
+        #expect(IngestSettings.load(from: defaults(#"{"ejectWhenDone":true}"#)).whenDone == .eject)
+        #expect(IngestSettings.load(from: defaults(#"{}"#)).whenDone == .eject)
+        #expect(IngestSettings.load(from: defaults(#"{"whenDone":"offerFormat","ejectWhenDone":true}"#)).whenDone == .offerFormat)
+    }
+
+    @Test("the ambiance and the send are kept, and default to the forest and nothing")
+    func ambianceAndUpload() {
+        var settings = IngestSettings()
+        #expect(settings.ambiance == .forest)
+        #expect(settings.titles == .serif)
+        #expect(settings.upload.kind == .none)
+        #expect(!settings.uploadWhenDone)
+
+        let suite = UserDefaults(suiteName: "rushes-tests-\(UUID().uuidString)")!
+        settings.ambiance = .lavender
+        settings.titles = .sans
+        settings.upload.kind = .ftps
+        settings.upload.host = "nas.local"
+        settings.save(to: suite)
+        let loaded = IngestSettings.load(from: suite)
+        #expect(loaded.ambiance == .lavender)
+        #expect(loaded.titles == .sans)
+        #expect(loaded.upload.kind == .ftps)
+        #expect(loaded.upload.host == "nas.local")
+    }
+
     @Test("the folder layout saved as a name is still read")
     func legacyLayoutName() {
         let suite = defaults(#"{"layout":"byType"}"#)
