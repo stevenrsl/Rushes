@@ -15,7 +15,7 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ./build.sh                                          # release build → build/Rushes.app
 ./build.sh debug
 ./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
-swift test --scratch-path /tmp/rushes-build         # 114 tests; a bench and snapshots skipped unless asked
+swift test --scratch-path /tmp/rushes-build         # 135 tests; benches and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
@@ -42,7 +42,14 @@ at that moment: the card's volume serial is the one read before the backup (`Car
 `verifiedIdentities`, since two cards swapped in a reader mount at the same path), it is still
 mounted there, it is ejectable or removable media, it is not a destination, and it is exFAT or
 FAT. Then `diskutil eraseVolume` with its own file system and name, and an eject. Never a card
-"à vérifier" or "ne pas formater", never by itself, never several at once.
+"à vérifier" or "ne pas formater", never by itself, never several at once. A second door, the
+same setting, opened on 2026-10-16: "Supprimer les fichiers copiés…" deletes from a card only
+what is on every drive (`CardCleanup`, `Ingest.deleteCopied`), for bodies that keep settings or
+a clip nobody ticked on the card. Offered on a card "formatable" or "à vérifier" (what makes it
+"à vérifier" is never in the list), never "ne pas formater". At that moment the volume serial is
+checked again, and each file must still have on the card the size and date it was copied with
+and lie on every drive at that size, or it stays; an already-saved shot counts only where the
+journal can still place its copy on every drive. Unlinked, not moved to a trash.
 
 **Nothing on a drive is ever replaced.** A copy is written as `.<name>.rushes-partial` beside
 its final name, read back, and named only if it matches, with `renamex_np(…, RENAME_EXCL)`.
@@ -101,7 +108,27 @@ stays in yesterday's folder); and which numbers are already spoken for (sort out
 empty the drive, and those numbers are still not handed out twice). It is derived: every line is
 also in a manifest, so deleting it costs those three answers until the next backup, never a
 file. It is read once per state of itself and kept in memory, because a plan is made again at
-every keystroke.
+every keystroke. Since 0.5 a `start` line also says who the backup was for (client, project,
+initials as typed, and its shoot days), so a card brought back in the evening is told which
+shoot it carries on (`ShootContinuation`, asked 2026-10-16): the backup that already holds some
+of its shots, else the last one of the same shoot day. The Tournage section says it, and when
+the fields name another shoot offers "Reprendre ce tournage", which puts the client and project
+back so the numbers carry on in the same folder. Older journals, without those fields, offer
+nothing.
+
+**Each drive may receive only some kinds** (asked 2026-10-16 for 0.6): the photos on one disk
+and the videos on another, or in two folders of one. Destinations shows a "Reçoit" menu per
+drive (Tout, or any of Photos, Vidéos, Sons), kept in `settings.destinationKinds` by path, absent
+meaning everything. Each `PlannedGroup` carries its `drives`; everywhere below that says "every
+drive", read "every drive that receives this kind of shot": the copy, its journal line, the
+skip, the name conflicts, the room and FAT32 checks, the cleanup. Numbers still count against
+every drive, so no two shots share one. Each drive's manifest, CSV, MHL and HTML report list what
+that drive holds and nothing else (`BackupReport.onDrives`), since the audit reads them back
+against it; the send takes each file from the first drive that holds it, and a second drive's
+records with its name added. A kind no drive receives is a `noDrive` shot: it holds the button
+("Aucun disque ne reçoit les vidéos") and its card "ne pas formater". Two folders on one volume
+are refused only when they share a kind. The page says how many copies each kind gets, and
+that what sits on one drive has no second copy.
 
 **A shot is skipped only if every drive still has it.** The manifest is a memory, not a proof:
 a file it lists is counted as saved only if it is lying at its path, at its size
@@ -132,11 +159,14 @@ Sources/Rushes/
               Naming (ShootDay, NameTemplate, presets, Sanitize, FolderLayout), Settings,
               Plan (Planner, DestinationIndex), History, Journal (per-drive record), Verdict,
               Readiness (what holds ⌘↩), Report (the HTML page), MHL (ASC MHL v2),
+              Continuation (the shoot an evening's card carries on),
               Diagnostic (a card described for a beta tester to send)
   Transfer/   XXHash64, Copier (one file, every drive, checked), Backup (a whole plan +
               manifests), Audit (a drive read back against its records), Volumes (mount
-              watching, free space, file system, eject, the guarded format), Upload (the copy
-              sent elsewhere: a synced folder or FTP/FTPS through curl, Keychain)
+              watching, free space, file system, eject, the guarded format), Cleanup
+              (copied files deleted from a card, each checked again), Upload (the copy
+              sent elsewhere: a synced folder or FTP/FTPS through curl, Keychain),
+              Throughput (the speed over a backup, in bins, for the curve)
   App/        RushesApp (+ AppDelegate: quitting mid-backup is asked), Ingest (the observable
               model: cards, drives, plan, backup, notifications, sleep assertion), Feedback
               (the Aide menu: describe a card, report a problem, write)
@@ -201,7 +231,9 @@ and takes no number, so the numbering stays continuous.
 `NameTemplate` reads `{TOKEN}` patterns: YYMMDD, YYYYMMDD, HHMMSS, INIT, CLIENT, PROJET, CAM,
 NUM, ORIG, TYPE (plus French aliases). Presets: Caméra au bout
 `{YYMMDD}_{INIT}_{CLIENT}_{PROJET}_{NUM}_{CAM}` (the default), Standard `{YYMMDD}_{INIT}_{CLIENT}_{PROJET}_{NUM}`,
-Multicam (`…_{CAM}{NUM}`), with the original name, long date. Anything typed is a custom pattern.
+Multicam (`…_{CAM}{NUM}`), with the original name, long date. Anything typed is a custom pattern,
+which "Enregistrer ce modèle…" keeps under a name of one's own (`settings.namePresets`, asked
+2026-10-16): a chip beside the built-in ones, renamed or deleted from its context menu.
 A pattern must hold `{NUM}` or `{ORIG}`.
 
 - **Fields are made safe**: `Sanitize.field` folds to ASCII, drops apostrophes, keeps
@@ -315,7 +347,14 @@ looked at it. The action bar also holds back a name whose `.rushes-partial` woul
 for the drive, two destination folders that turn out to be one disk, and a disk without a
 margin over the bytes to copy, and a FAT32 drive when a clip is over 4 GB (`EFBIG` would stop
 the night). What it cannot hold back it says anyway, in the same line. These rules are
-`Readiness`, a plain value with a test per rule. The page also says when the backup should end
+`Readiness`, a plain value with a test per rule. A plan is made off the main thread, with the
+preview's rows (`PreviewRows`) and the shoot it continues; the page only reads what is ready.
+A setting a plan never reads (`plansLike`) makes none, and the scan's ticks are paced to ten a
+second: changing settings while a card of thousands of photos was read used to freeze the window
+(2026-10-16; `PlanBench` measures it, 520 ms then 150 ms for 10 000 shots). The preview table
+shows ten rows, "Tout afficher" the rest: a table of ten thousand rows was laid out again at
+every setting changed and froze the window (reported 2026-10-17); the chips keep the counts.
+The theme is set only when it changes, since every view reads it. The page also says when the backup should end
 ("fini vers 04:10"), from the pace of the last backup worth measuring
 (`settings.measuredThroughput`).
 
@@ -324,12 +363,20 @@ the night). What it cannot hold back it says anyway, in the same line. These rul
 The backup holds a `ProcessInfo` activity: the Mac does not idle-sleep (the screen may). A
 notification with sound says when it is done ("Tu peux aller dormir"); cards read whole and
 verified are ejected, the others never (or left in, or offered a format: `settings.whenDone`,
-which replaced the `ejectWhenDone` switch on 2026-10-15 and still reads it). Quitting mid-backup asks, then stops the copy and waits
+which replaced the `ejectWhenDone` switch on 2026-10-15 and still reads it). A card is ejected
+as its whole disk (`diskutil eject` on the parent), so a camera plugged by USB lets go of it too
+(reported 2026-10-16), unless another volume of that disk must stay; a device that will not
+eject its medium is still unmounted, and the page says the body can be unplugged. Not yet tried
+on a real body. Quitting mid-backup asks, then stops the copy and waits
 for the record to be written. What was verified before a cancel, a failure, a quit or a crash is
 in the journal, so "Reprendre" copies only the rest, even with "Ignorer ce qui est déjà
 sauvegardé" off and even after the app was killed. A card left unticked does not hold the button
 while it is read. Twenty seconds without a byte moving is said on the copying page: a stuck
-copy and a slow one look the same on a percentage. Appearance can be forced dark in Settings
+copy and a slow one look the same on a percentage. Under the figure, a curve of the speed over
+the backup (`SpeedGraph`, asked 2026-10-17 "un peu comme Windows"): what was read, the card in
+the accent and the drives read back in its softer shade, a dashed line at the speed now. It
+is `ThroughputHistory`, bytes summed into bins that merge two by two past 240, so three hours
+cost what a minute does. Appearance can be forced dark in Settings
 (Copie tab).
 
 Rushes touches the network in two places only, both asked for: Rushes › Rechercher une mise à
