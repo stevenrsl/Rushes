@@ -62,6 +62,11 @@ struct CopyingView: View {
                 }
                 .padding(.top, 34)
 
+                if ingest.throughput.bins.count >= 2 {
+                    SpeedGraph(history: ingest.throughput, current: ingest.speed)
+                        .padding(.top, 28)
+                }
+
                 TimelineView(.periodic(from: .now, by: 5)) { context in
                     let still = context.date.timeIntervalSince(ingest.lastMoved)
                     if still >= 20, !ingest.progress.quiet {
@@ -91,12 +96,107 @@ struct CopyingView: View {
     }
 }
 
+/// The speed over the backup, drawn as Windows draws it beside a copy, in
+/// Rushes's colours: the card's pace in the accent, the drives read back in
+/// its softer shade, a dashed line at the speed now. On the ground, with a
+/// hairline for a floor: the figure above says the rest.
+struct SpeedGraph: View {
+    let history: ThroughputHistory
+    /// The smoothed speed the page prints, for the dashed line.
+    let current: Double
+
+    var body: some View {
+        let bins = history.bins
+        let top = max(history.peak, current, 1) * 1.15
+        let verifies = bins.contains(where: \.isVerifying)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Vitesse")
+                    .font(TypeScale.label)
+                    .foregroundStyle(Palette.inkSoft)
+                Spacer()
+                Text("au plus \(Format.speed(history.peak))")
+                    .font(TypeScale.micro)
+                    .foregroundStyle(Palette.inkFaint)
+                    .monospacedDigit()
+            }
+            Canvas { context, size in
+                let step = size.width / CGFloat(bins.count - 1)
+                func y(_ rate: Double) -> CGFloat { size.height * (1 - CGFloat(rate / top)) }
+                let points = bins.enumerated().map { i, bin in CGPoint(x: CGFloat(i) * step, y: y(bin.rate)) }
+                var line = Path()
+                line.addLines(points)
+                var area = line
+                area.addLine(to: CGPoint(x: size.width, y: size.height))
+                area.addLine(to: CGPoint(x: 0, y: size.height))
+                area.closeSubpath()
+
+                context.fill(area, with: .color(Palette.accent))
+                // The read-back, over the same area, clipped to its bins.
+                var reading = Path()
+                for (i, bin) in bins.enumerated() where bin.isVerifying {
+                    reading.addRect(CGRect(x: CGFloat(i) * step - step / 2, y: 0, width: step, height: size.height))
+                }
+                if !reading.isEmpty {
+                    context.drawLayer { layer in
+                        layer.clip(to: reading)
+                        layer.fill(area, with: .color(Palette.accentSoft))
+                    }
+                }
+                context.stroke(line, with: .color(Palette.accentLine), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round))
+
+                var floor = Path()
+                floor.move(to: CGPoint(x: 0, y: size.height - 0.5))
+                floor.addLine(to: CGPoint(x: size.width, y: size.height - 0.5))
+                context.stroke(floor, with: .color(Palette.hairlineStrong), lineWidth: 1)
+
+                if current > 0 {
+                    var now = Path()
+                    now.move(to: CGPoint(x: 0, y: y(current)))
+                    now.addLine(to: CGPoint(x: size.width, y: y(current)))
+                    context.stroke(now, with: .color(Palette.inkFaint), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                }
+            }
+            .frame(height: 110)
+            .accessibilityHidden(true)
+            HStack(spacing: 14) {
+                Swatch(color: Palette.accent, text: "Lecture de la carte")
+                if verifies { Swatch(color: Palette.accentSoft, text: "Relecture des disques") }
+                Spacer()
+                Text("depuis \(Format.duration(history.elapsed))")
+                    .font(TypeScale.micro)
+                    .foregroundStyle(Palette.inkFaint)
+                    .monospacedDigit()
+            }
+        }
+    }
+
+    private struct Swatch: View {
+        let color: Color
+        let text: String
+
+        var body: some View {
+            HStack(spacing: 5) {
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(color)
+                    .overlay(RoundedRectangle(cornerRadius: 2, style: .continuous).strokeBorder(Palette.accentLine, lineWidth: 1))
+                    .frame(width: 10, height: 10)
+                Text(text)
+                    .font(TypeScale.micro)
+                    .foregroundStyle(Palette.inkFaint)
+            }
+        }
+    }
+}
+
 /// The end: checked, how much, and what to do with the cards.
 struct DoneView: View {
     @Environment(Ingest.self) private var ingest
     let report: BackupReport
     /// The card whose format is being asked, until it is confirmed.
     @State private var toFormat: Ingest.Card?
+    /// The card whose copied files are about to be deleted, until confirmed.
+    @State private var toEmpty: Ingest.Card?
 
     var body: some View {
         PageScroll {
@@ -129,7 +229,7 @@ struct DoneView: View {
                                 fact("Cartes", message)
                             }
                             ForEach(Array(ingest.formatMessages.enumerated()), id: \.offset) { _, message in
-                                fact("Formatage", message)
+                                fact("Carte", message)
                             }
                         }
                     }
@@ -139,14 +239,16 @@ struct DoneView: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 ForEach(ingest.verdicts) { verdict in
                                     let card = ingest.formatableCards.first { $0.id == verdict.cardID }
+                                    let cleanable = ingest.cleanableCards.first { $0.id == verdict.cardID }
                                     VerdictRow(
                                         verdict: verdict,
                                         canFormat: card != nil,
+                                        canEmpty: cleanable != nil,
                                         formatting: ingest.formatting == verdict.cardID,
-                                        busy: ingest.formatting != nil
-                                    ) {
-                                        toFormat = card
-                                    }
+                                        busy: ingest.formatting != nil,
+                                        format: { toFormat = card },
+                                        empty: { toEmpty = cleanable }
+                                    )
                                 }
                             }
                         }
@@ -239,6 +341,18 @@ struct DoneView: View {
         } message: { _ in
             Text("Tout ce qui est sur la carte est effacé, sans retour. Sa sauvegarde a été relue sur chaque disque. Elle garde son nom et son format, puis elle est éjectée.")
         }
+        .confirmationDialog(
+            "Supprimer les fichiers copiés de « \(toEmpty?.name ?? "") » ?",
+            isPresented: Binding(get: { toEmpty != nil }, set: { if !$0 { toEmpty = nil } }),
+            presenting: toEmpty
+        ) { card in
+            Button("Supprimer \(Format.count(ingest.copiedFiles(of: card), "fichier"))", role: .destructive) {
+                Task { await ingest.deleteCopied(card) }
+            }
+            Button("Annuler", role: .cancel) {}
+        } message: { _ in
+            Text("Seuls les fichiers qui sont sur chaque disque sont supprimés, sans retour : chacun y est d'abord retrouvé, à sa taille. Ce qui a été laissé sur la carte y reste, et la carte n'est pas formatée. L'appareil peut ensuite demander à réparer sa base d'images : laisse-le faire.")
+        }
     }
 
     private func fact(_ label: String, _ value: String) -> some View {
@@ -294,9 +408,11 @@ struct DoneView: View {
 private struct VerdictRow: View {
     let verdict: CardVerdict
     var canFormat = false
+    var canEmpty = false
     var formatting = false
     var busy = false
     var format: () -> Void = {}
+    var empty: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -317,18 +433,30 @@ private struct VerdictRow: View {
                     .foregroundStyle(Palette.inkSoft)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if canFormat || formatting {
+            if canFormat || canEmpty || formatting {
                 Spacer(minLength: 16)
                 if formatting {
                     ProgressView().controlSize(.small)
-                    Text("Formatage…")
+                    Text("En cours…")
                         .font(TypeScale.meta)
                         .foregroundStyle(Palette.inkSoft)
                 } else {
-                    Button("Formater…", action: format)
-                        .buttonStyle(.accentLink)
-                        .font(TypeScale.meta)
-                        .disabled(busy)
+                    VStack(alignment: .trailing, spacing: 6) {
+                        if canFormat {
+                            Button("Formater…", action: format)
+                                .buttonStyle(.accentLink)
+                                .font(TypeScale.meta)
+                                .disabled(busy)
+                        }
+                        if canEmpty {
+                            Button("Supprimer les fichiers copiés…", action: empty)
+                                .buttonStyle(.accentLink)
+                                .font(TypeScale.meta)
+                                .disabled(busy)
+                                .help("Efface de la carte ce qui est sur chaque disque, et rien d'autre. La carte n'est pas formatée.")
+                        }
+                    }
+                    .fixedSize()
                 }
             }
         }

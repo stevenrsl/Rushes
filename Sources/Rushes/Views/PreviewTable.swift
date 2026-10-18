@@ -6,33 +6,29 @@ import SwiftUI
 struct PreviewBlock: View {
     @Environment(Ingest.self) private var ingest
     @State private var filter: Filter = .toCopy
+    /// The whole list, asked for. Ten rows by default: a table of ten
+    /// thousand was laid out again at every setting changed, and the window
+    /// froze while it was (reported 2026-10-17). The chips keep the counts.
+    @State private var showAll = false
+    static let shown = 10
 
     enum Filter: Hashable {
         case toCopy, saved, leftOut, conflicts
     }
 
-    struct Row: Identifiable {
-        enum Status { case new, saved, leftOut, conflict }
-        let id: String
-        let status: Status
-        let name: String
-        let original: String
-        let folder: String
-        let size: Int64
-        let camera: String
-        let note: String
-    }
+    typealias Row = PreviewRows.Row
 
     var body: some View {
-        let rows = rows(for: filter)
+        let all = ingest.preview.rows(for: filter)
+        let rows = showAll ? all : Array(all.prefix(Self.shown))
         VStack(alignment: .leading, spacing: 14) {
             Flow(spacing: 6) {
                 Chip(text: "À copier", count: ingest.plan.filesToCopy, selected: filter == .toCopy) { filter = .toCopy }
                 if ingest.plan.alreadyCopied > 0 {
                     Chip(text: "Déjà sauvegardés", count: ingest.plan.alreadyCopied, selected: filter == .saved) { filter = .saved }
                 }
-                if leftOutCount > 0 {
-                    Chip(text: "Laissés sur la carte", count: leftOutCount, selected: filter == .leftOut) { filter = .leftOut }
+                if ingest.preview.leftOut.count > 0 {
+                    Chip(text: "Laissés sur la carte", count: ingest.preview.leftOut.count, selected: filter == .leftOut) { filter = .leftOut }
                 }
                 if !ingest.plan.conflicts.isEmpty {
                     Chip(text: "Conflits", count: ingest.plan.conflicts.count, selected: filter == .conflicts) { filter = .conflicts }
@@ -82,23 +78,29 @@ struct PreviewBlock: View {
                 }
                 .tableStyle(.inset(alternatesRowBackgrounds: false))
                 .scrollContentBackground(.hidden)
-                .frame(minHeight: 260, idealHeight: 360, maxHeight: 460)
+                .frame(minHeight: showAll ? 260 : 120, idealHeight: showAll ? 360 : 290, maxHeight: showAll ? 460 : 290)
                 // The one container of the page: the rows scroll inside it.
                 .padding(6)
                 .background(RoundedRectangle(cornerRadius: Radius.surface, style: .continuous).fill(Palette.surface))
                 .overlay(RoundedRectangle(cornerRadius: Radius.surface, style: .continuous).strokeBorder(Palette.hairline))
             }
-            Text("Rien n'est écrit avant d'appuyer sur Sauvegarder.")
-                .font(TypeScale.micro)
-                .foregroundStyle(Palette.inkFaint)
+            HStack(spacing: 10) {
+                Text(all.count > Self.shown && !showAll
+                    ? "Les \(Self.shown) premiers sur \(all.count). Rien n'est écrit avant d'appuyer sur Sauvegarder."
+                    : "Rien n'est écrit avant d'appuyer sur Sauvegarder.")
+                    .font(TypeScale.micro)
+                    .foregroundStyle(Palette.inkFaint)
+                if all.count > Self.shown {
+                    Button(showAll ? "Afficher moins" : "Tout afficher") { showAll.toggle() }
+                        .buttonStyle(.accentLink)
+                        .font(TypeScale.micro)
+                }
+            }
         }
+        .onChange(of: filter) { showAll = false }
         .onChange(of: ingest.plan.conflicts.isEmpty) { _, empty in
             if !empty { filter = .conflicts } else if filter == .conflicts { filter = .toCopy }
         }
-    }
-
-    private var leftOutCount: Int {
-        ingest.plan.leftOutCount + ingest.readyCards.reduce(0) { $0 + ($1.scan?.orphans.count ?? 0) + ($1.scan?.unknown.count ?? 0) + ($1.scan?.setAside.count ?? 0) }
     }
 
     private var emptyText: String {
@@ -116,71 +118,94 @@ struct PreviewBlock: View {
         case .conflict: Palette.alert
         }
     }
+}
 
-    private func label(for sourceID: String) -> String {
-        ingest.cards.first { $0.id == sourceID }?.cameraLabel ?? ""
+/// The preview's rows, every filter at once, made with the plan off the main
+/// thread. Made in the view, they were made again at every redraw, which on a
+/// card of ten thousand shots is every keystroke and every tick of the scan.
+struct PreviewRows: Sendable {
+    struct Row: Identifiable, Sendable {
+        enum Status: Sendable { case new, saved, leftOut, conflict }
+        let id: String
+        let status: Status
+        let name: String
+        let original: String
+        let folder: String
+        let size: Int64
+        let camera: String
+        let note: String
     }
 
-    private func rows(for filter: Filter) -> [Row] {
-        let plan = ingest.plan
+    var toCopy: [Row] = []
+    var saved: [Row] = []
+    var leftOut: [Row] = []
+    var conflicts: [Row] = []
+
+    func rows(for filter: PreviewBlock.Filter) -> [Row] {
         switch filter {
-        case .toCopy:
-            return plan.toCopy.flatMap { group in
-                group.files.map { planned in
-                    Row(id: planned.id, status: .new, name: planned.name, original: planned.file.name,
-                        folder: (planned.relativePath as NSString).deletingLastPathComponent,
-                        size: planned.file.size, camera: label(for: group.sourceID), note: planned.file.relativePath)
-                }
+        case .toCopy: toCopy
+        case .saved: saved
+        case .leftOut: leftOut
+        case .conflicts: conflicts
+        }
+    }
+
+    init() {}
+
+    init(plan: IngestPlan, sources: [PlanSource], settings: IngestSettings) {
+        let labels = Dictionary(sources.map { ($0.id, $0.cameraLabel) }, uniquingKeysWith: { a, _ in a })
+        func label(_ id: String) -> String { labels[id] ?? "" }
+        toCopy = plan.toCopy.flatMap { group in
+            group.files.map { planned in
+                Row(id: planned.id, status: .new, name: planned.name, original: planned.file.name,
+                    folder: (planned.relativePath as NSString).deletingLastPathComponent,
+                    size: planned.file.size, camera: label(group.sourceID), note: planned.file.relativePath)
             }
-        case .saved:
-            return plan.groups.filter { $0.status == .alreadyCopied }.flatMap { group in
-                group.group.files.filter { !group.leftOut.contains($0) }.map { file in
-                    Row(id: file.id, status: .saved, name: file.name, original: file.relativePath,
-                        folder: group.shootFolder, size: file.size, camera: label(for: group.sourceID),
-                        note: "Sur chaque disque, retrouvé à la bonne taille dans \((group.savedIn ?? group.shootFolder).isEmpty ? "la destination" : group.savedIn ?? group.shootFolder)")
-                }
+        }
+        saved = plan.groups.filter { $0.status == .alreadyCopied }.flatMap { group in
+            let leftOut = Set(group.leftOut.map(\.id))
+            return group.group.files.filter { !leftOut.contains($0.id) }.map { file in
+                Row(id: file.id, status: .saved, name: file.name, original: file.relativePath,
+                    folder: group.shootFolder, size: file.size, camera: label(group.sourceID),
+                    note: "Sur chaque disque, retrouvé à la bonne taille dans \((group.savedIn ?? group.shootFolder).isEmpty ? "la destination" : group.savedIn ?? group.shootFolder)")
             }
-        case .leftOut:
-            let settings = ingest.settings
-            var rows = plan.groups.flatMap { group in
-                group.leftOut.map { file in
-                    Row(id: file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
-                        size: file.size, camera: label(for: group.sourceID), note: reason(file, settings))
-                }
+        }
+        leftOut = plan.groups.flatMap { group in
+            group.leftOut.map { file in
+                Row(id: file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
+                    size: file.size, camera: label(group.sourceID), note: Self.reason(file, settings))
             }
-            for card in ingest.readyCards {
-                for file in card.scan?.orphans ?? [] {
-                    rows.append(Row(id: file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
-                                    size: file.size, camera: card.cameraLabel, note: "Fichier de la carte, sans photo ni vidéo à qui appartenir"))
-                }
-                for file in card.scan?.unknown ?? [] {
-                    rows.append(Row(id: card.id + "/" + file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
-                                    size: file.size, camera: card.cameraLabel,
-                                    note: file.ext.isEmpty ? "Type de fichier inconnu de Rushes" : "« \(file.ext) » : type de fichier inconnu de Rushes"))
-                }
-                for file in card.scan?.setAside ?? [] {
-                    rows.append(Row(id: card.id + "/" + file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
-                                    size: file.size, camera: card.cameraLabel,
-                                    note: (file.hiddenBy ?? "").isEmpty
-                                        ? "Caché par l'appareil : à copier à la main si c'est une prise"
-                                        : "Dans « \(file.hiddenBy!) », où l'appareil range ses propres fichiers"))
-                }
+        }
+        for source in sources {
+            for file in source.orphans {
+                leftOut.append(Row(id: file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
+                                   size: file.size, camera: source.cameraLabel, note: "Fichier de la carte, sans photo ni vidéo à qui appartenir"))
             }
-            return rows
-        case .conflicts:
-            return plan.conflicts.flatMap { group in
-                group.files.map { planned in
-                    var note = ""
-                    if case .conflict(let message) = group.status { note = message }
-                    return Row(id: planned.id, status: .conflict, name: planned.name, original: planned.file.name,
-                               folder: (planned.relativePath as NSString).deletingLastPathComponent,
-                               size: planned.file.size, camera: label(for: group.sourceID), note: note)
-                }
+            for file in source.unknown {
+                leftOut.append(Row(id: source.id + "/" + file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
+                                   size: file.size, camera: source.cameraLabel,
+                                   note: file.ext.isEmpty ? "Type de fichier inconnu de Rushes" : "« \(file.ext) » : type de fichier inconnu de Rushes"))
+            }
+            for file in source.setAside {
+                leftOut.append(Row(id: source.id + "/" + file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
+                                   size: file.size, camera: source.cameraLabel,
+                                   note: (file.hiddenBy ?? "").isEmpty
+                                       ? "Caché par l'appareil : à copier à la main si c'est une prise"
+                                       : "Dans « \(file.hiddenBy!) », où l'appareil range ses propres fichiers"))
+            }
+        }
+        conflicts = plan.conflicts.flatMap { group in
+            group.files.map { planned in
+                var note = ""
+                if case .conflict(let message) = group.status { note = message }
+                return Row(id: planned.id, status: .conflict, name: planned.name, original: planned.file.name,
+                           folder: (planned.relativePath as NSString).deletingLastPathComponent,
+                           size: planned.file.size, camera: label(group.sourceID), note: note)
             }
         }
     }
 
-    private func reason(_ file: MediaFile, _ settings: IngestSettings) -> String {
+    private static func reason(_ file: MediaFile, _ settings: IngestSettings) -> String {
         switch file.role {
         case .proxy: "Proxy de l'appareil : « \(file.kind.ext) » non coché dans Fichiers"
         case .thumbnail: "Vignette de l'appareil : non cochée dans Fichiers"

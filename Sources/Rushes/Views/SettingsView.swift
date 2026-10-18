@@ -256,7 +256,7 @@ private struct CopySettings: View {
         case .keep:
             "Les cartes restent dans le lecteur. La page de fin propose de les éjecter."
         case .offerFormat:
-            "La page de fin propose de formater chaque carte « formatable », une par une, après confirmation, puis l'éjecte. Rushes vérifie d'abord que c'est bien la carte sauvegardée. Une carte « à vérifier » ou « ne pas formater » ne l'est jamais. Si l'appareil demande ensuite à recréer ses dossiers ou sa base d'images, laisse-le faire."
+            "La page de fin propose de formater chaque carte « formatable », une par une, après confirmation, puis l'éjecte, ou seulement d'en supprimer les fichiers copiés : ce qui est sur chaque disque, retrouvé à sa taille juste avant. Rushes vérifie d'abord que c'est bien la carte sauvegardée. Une carte « à vérifier » peut être vidée, jamais formatée ; une carte « ne pas formater » ni l'un ni l'autre. Si l'appareil demande ensuite à recréer ses dossiers ou sa base d'images, laisse-le faire."
         }
     }
 }

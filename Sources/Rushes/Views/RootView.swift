@@ -160,7 +160,7 @@ private struct ActionBar: View {
         var text = "Chaque copie est relue et vérifiée"
         switch ingest.settings.whenDone {
         case .eject: text += ", les cartes sont éjectées à la fin"
-        case .offerFormat: text += ", la fin propose de formater les cartes"
+        case .offerFormat: text += ", la fin propose de formater ou de vider les cartes"
         case .keep: break
         }
         if ingest.settings.uploadWhenDone, ingest.settings.upload.isReady {

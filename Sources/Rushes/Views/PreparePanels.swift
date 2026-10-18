@@ -28,6 +28,9 @@ struct ShootBlock: View {
                     }
                 }
             }
+            if let shoot = ingest.plan.continuation, !ingest.isCopying {
+                ContinuationLine(shoot: shoot)
+            }
         }
     }
 
@@ -88,6 +91,55 @@ struct ShootBlock: View {
     }
 }
 
+/// The shoot these cards carry on, as the drives remember it: said when the
+/// fields already name it, offered in one click when they name another.
+private struct ContinuationLine: View {
+    @Environment(Ingest.self) private var ingest
+    let shoot: ShootContinuation
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: shoot.matches ? "arrow.turn.down.right" : "clock.arrow.circlepath")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(shoot.matches ? Palette.inkFaint : Palette.accentInk)
+                .frame(width: 16)
+                .accessibilityHidden(true)
+            Text(sentence)
+                .font(TypeScale.meta)
+                .foregroundStyle(shoot.matches ? Palette.inkFaint : Palette.inkSoft)
+                .fixedSize(horizontal: false, vertical: true)
+            if !shoot.matches {
+                Button("Reprendre ce tournage") { ingest.continueShoot(shoot) }
+                    .buttonStyle(.accentLink)
+                    .font(TypeScale.meta.weight(.medium))
+                    .fixedSize()
+                    .help("Remet le client et le projet de cette sauvegarde : les numéros reprennent après les siens, dans le même dossier.")
+            }
+        }
+    }
+
+    private var when: String {
+        let today = ShootDay(date: .now, cutoffHour: 0)
+        let day = ShootDay(date: shoot.at, cutoffHour: 0)
+        let time = Format.time(shoot.at)
+        return day == today ? "à \(time)" : "le \(Format.day(day)) à \(time)"
+    }
+
+    private var sentence: String {
+        let name = "« \(shoot.title) »"
+        switch (shoot.matches, shoot.shotsSaved > 0) {
+        case (true, true):
+            return "Suite de \(name), sauvegardé \(when) : ses prises déjà copiées sont ignorées, les numéros reprennent après les siens."
+        case (true, false):
+            return "Suite de \(name), sauvegardé \(when) : les numéros reprennent après les siens."
+        case (false, true):
+            return "\(Format.count(shoot.shotsSaved, "prise")) de ces cartes \(shoot.shotsSaved > 1 ? "sont" : "est") déjà dans \(name), sauvegardé \(when)."
+        case (false, false):
+            return "Le même jour, \(name) a été sauvegardé \(when)."
+        }
+    }
+}
+
 /// A text field with the last values typed a click away.
 private struct RecentField: View {
     let placeholder: String
@@ -138,7 +190,7 @@ struct DrivesBlock: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             ForEach(ingest.drives) { drive in
-                DriveRow(drive: drive, incoming: ingest.plan.bytesToCopy)
+                DriveRow(drive: drive, incoming: ingest.plan.bytes(to: drive.url.path))
             }
             if ingest.settings.upload.kind != .none {
                 SendRow()
@@ -170,15 +222,39 @@ struct DrivesBlock: View {
             // A line of its own: squeezed beside the two links it wrapped into
             // a narrow column of its own.
             if !ingest.drives.isEmpty {
-                Text(ingest.drives.count > 1
-                     ? "La carte est lue une fois et écrite sur chaque disque en même temps."
-                     : "Avec un second disque, tu as une vraie sauvegarde pour le même temps.")
+                Text(copiesSentence)
                     .font(TypeScale.micro)
                     .foregroundStyle(Palette.inkFaint)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, -6)
             }
         }
+    }
+
+    /// How many copies each kind gets, said only when the drives share it
+    /// out: two copies of the photos and one of the videos is not a backup
+    /// of the videos, and the page says so before the night does.
+    private var copiesSentence: String {
+        let settings = ingest.settings
+        guard settings.routes else {
+            return ingest.drives.count > 1
+                ? "La carte est lue une fois et écrite sur chaque disque en même temps."
+                : "Avec un second disque, tu as une vraie sauvegarde pour le même temps."
+        }
+        let parts = MediaCategory.allCases.map { category -> String in
+            let n = ingest.drives.filter { settings.receives($0.url.path).contains(category) }.count
+            switch n {
+            case 0: return "\(category.plural) sur aucun"
+            case 1: return "\(category.plural) sur un seul"
+            default: return "\(category.plural) sur \(n)"
+            }
+        }
+        let list = parts.dropLast().joined(separator: ", ") + " et " + parts.last!
+        let single = MediaCategory.allCases.contains { category in
+            ingest.drives.filter { settings.receives($0.url.path).contains(category) }.count == 1
+        }
+        let text = list.prefix(1).uppercased() + list.dropFirst() + "."
+        return single ? text + " Ce qui n'est que sur un disque n'a pas de seconde copie." : text
     }
 
     private func chooseDrive() {
@@ -212,6 +288,7 @@ private struct DriveRow: View {
                     .foregroundStyle(Palette.ink)
                     .lineLimit(1)
                 Spacer(minLength: 6)
+                receivesMenu
                 Text(status)
                     .font(TypeScale.meta)
                     .foregroundStyle(tight || !drive.isOnline ? Palette.late : Palette.inkFaint)
@@ -240,6 +317,52 @@ private struct DriveRow: View {
     }
 
     private var tight: Bool { (drive.available ?? .max) < incoming }
+
+    /// What this destination receives: everything, or the photos here and
+    /// the videos elsewhere. Kept for the next nights, as the drive is.
+    private var receivesMenu: some View {
+        let receives = ingest.settings.receives(drive.url.path)
+        return Menu {
+            Button("Tout") { ingest.settings.setReceives(drive.url.path, Set(MediaCategory.allCases)) }
+            Divider()
+            ForEach(MediaCategory.allCases, id: \.self) { category in
+                Toggle(category.title, isOn: Binding(
+                    get: { receives.contains(category) },
+                    set: { on in
+                        var next = receives
+                        if on { next.insert(category) } else { next.remove(category) }
+                        ingest.settings.setReceives(drive.url.path, next)
+                    }
+                ))
+                // The last kind cannot be taken away: a drive that receives
+                // nothing is one to remove.
+                .disabled(receives == [category])
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(Self.label(receives))
+                    .font(TypeScale.meta)
+                    .foregroundStyle(receives.count < MediaCategory.allCases.count ? Palette.accentInk : Palette.inkFaint)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Palette.inkFaint)
+                    .accessibilityHidden(true)
+            }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(ingest.isCopying)
+        .help("Ce que ce disque reçoit : tout, ou seulement les photos, les vidéos ou les sons.")
+        .accessibilityLabel("Reçoit : \(Self.label(receives))")
+    }
+
+    static func label(_ receives: Set<MediaCategory>) -> String {
+        if receives.count == MediaCategory.allCases.count { return "Tout" }
+        let names = MediaCategory.allCases.filter(receives.contains).map(\.title)
+        return names.count == 2 ? names[0] + " et " + names[1].lowercased() : names.joined()
+    }
 
     private var status: String {
         guard drive.isOnline else { return "Non branché" }
@@ -344,41 +467,84 @@ func chooseUploadFolder() -> String? {
 /// How files are named, with the name they will get in front of you.
 struct NamingBlock: View {
     @Environment(Ingest.self) private var ingest
-    /// The preset the pattern was last equal to: what "Revenir à" goes back to
-    /// once the pattern has been edited by hand.
-    @State private var basePreset = NamePreset.cameraLast
+    /// The preset the pattern was last equal to, built in or saved: what
+    /// "Revenir à" goes back to once the pattern has been edited by hand.
+    @State private var base = (title: NamePreset.cameraLast.title, pattern: NamePreset.cameraLast.pattern)
+    /// The name being typed for the pattern on screen, while it is asked.
+    @State private var savingName: String?
+    @State private var renaming: SavedNamePreset?
 
     var body: some View {
         @Bindable var ingest = ingest
-        let preset = NamePreset.matching(ingest.settings.namePattern)
+        let pattern = ingest.settings.namePattern
+        let preset = NamePreset.matching(pattern)
+        let saved = ingest.settings.namePresets.first { $0.pattern == pattern }
         VStack(alignment: .leading, spacing: 14) {
             Flow(spacing: 6) {
                 ForEach(NamePreset.allCases) { p in
                     Chip(text: p.title, selected: preset == p) { ingest.settings.namePattern = p.pattern }
                 }
+                ForEach(ingest.settings.namePresets) { mine in
+                    Chip(text: mine.name, selected: saved == mine) { ingest.settings.namePattern = mine.pattern }
+                        .help(mine.pattern)
+                        .contextMenu {
+                            Button("Renommer…") { renaming = mine; savingName = mine.name }
+                            Button("Supprimer « \(mine.name) »", role: .destructive) {
+                                ingest.settings.namePresets.removeAll { $0 == mine }
+                            }
+                        }
+                }
                 // Not a choice: it shows only once the pattern is edited, lit.
                 // Always there and unlit, it looked like a preset that would
                 // not answer a click.
-                if preset == nil {
+                if preset == nil, saved == nil {
                     Chip(text: "Personnalisé", selected: true) {}
                         .allowsHitTesting(false)
                 }
             }
             .onChange(of: ingest.settings.namePattern, initial: true) { _, pattern in
-                if let matched = NamePreset.matching(pattern) { basePreset = matched }
+                if let matched = NamePreset.matching(pattern) {
+                    base = (matched.title, matched.pattern)
+                } else if let mine = ingest.settings.namePresets.first(where: { $0.pattern == pattern }) {
+                    base = (mine.name, mine.pattern)
+                }
+            }
+            .alert(renaming == nil ? "Enregistrer ce modèle" : "Renommer ce modèle", isPresented: Binding(
+                get: { savingName != nil },
+                set: { if !$0 { savingName = nil; renaming = nil } }
+            )) {
+                TextField("Nom", text: Binding(get: { savingName ?? "" }, set: { savingName = $0 }))
+                Button(renaming == nil ? "Enregistrer" : "Renommer") {
+                    let target = renaming?.pattern ?? pattern
+                    ingest.settings.savePreset(named: savingName ?? "", pattern: target)
+                    savingName = nil
+                    renaming = nil
+                }
+                Button("Annuler", role: .cancel) {}
+            } message: {
+                Text(renaming == nil
+                     ? "Il rejoint les modèles au-dessus du champ, pour les prochaines fois. Un clic droit le renomme ou le supprime."
+                     : renaming!.pattern)
             }
 
-            Field(label: "Modèle", help: preset?.detail ?? "Modèle personnalisé : les jetons entre accolades sont remplacés, le reste est gardé tel quel.", monospaced: true) {
+            Field(label: "Modèle", help: preset?.detail ?? (saved != nil ? "Ton modèle « \(saved!.name) »." : "Modèle personnalisé : les jetons entre accolades sont remplacés, le reste est gardé tel quel."), monospaced: true) {
                 TextField("{YYMMDD}_{INIT}_{CLIENT}_{PROJET}_{NUM}", text: $ingest.settings.namePattern)
             }
 
             Flow(spacing: 14) {
                 // A pattern gone wrong is undone in one click, not erased by hand.
-                if preset == nil {
-                    Button("Revenir à « \(basePreset.title) »") { ingest.settings.namePattern = basePreset.pattern }
+                if preset == nil, saved == nil {
+                    Button("Enregistrer ce modèle…") { savingName = "" }
                         .buttonStyle(.accentLink)
                         .font(TypeScale.meta.weight(.medium))
-                        .help(basePreset.pattern)
+                        .disabled(!NameTemplate(pattern).isUnique)
+                        .help(NameTemplate(pattern).isUnique ? "Le garder sous un nom, à côté des modèles de Rushes" : "Un modèle doit contenir {NUM} ou {ORIG}")
+                    if base.pattern != pattern {
+                        Button("Revenir à « \(base.title) »") { ingest.settings.namePattern = base.pattern }
+                            .buttonStyle(.accentLink)
+                            .font(TypeScale.meta.weight(.medium))
+                            .help(base.pattern)
+                    }
                 }
                 ForEach(NameToken.allCases, id: \.self) { token in
                     Button("+ " + token.label) {
@@ -414,7 +580,7 @@ struct NamingBlock: View {
                     }
                     .font(TypeScale.code)
                 }
-                if let drive = ingest.onlineDrives.first {
+                if let drive = ingest.onlineDrives.first(where: { first.drives.contains($0.url.path) }) ?? ingest.onlineDrives.first {
                     Text("dans " + drive.name + "/" + (first.shootFolder.isEmpty ? "" : first.shootFolder + "/"))
                         .font(TypeScale.micro)
                         .foregroundStyle(Palette.inkFaint)
