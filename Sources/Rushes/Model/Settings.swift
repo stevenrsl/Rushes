@@ -42,6 +42,10 @@ struct IngestSettings: Codable, Hashable, Sendable {
     var cameras: [KnownCamera] = []
     /// Paths of the drives last used, first one first.
     var destinations: [String] = []
+    /// What each destination receives, by path, when it is not everything:
+    /// the photos on one disk and the videos on another, or in two folders
+    /// of one (asked 2026-10-16 for 0.6). A path not listed takes it all.
+    var destinationKinds: [String: [MediaCategory]] = [:]
     var recentClients: [String] = []
     var recentProjects: [String] = []
     /// Bytes read and read back per second over the last backup worth
@@ -56,6 +60,9 @@ struct IngestSettings: Codable, Hashable, Sendable {
     var upload = UploadTarget()
     /// Sends by itself at the end of a backup. Off: a button on the done page.
     var uploadWhenDone = false
+    /// Name patterns saved under a name of one's own, beside the built-in
+    /// presets (asked 2026-10-16): one per client who wants theirs.
+    var namePresets: [SavedNamePreset] = []
     /// What was saved knows which changes it has already seen. Settings
     /// written before this existed read as 0.
     var schema = IngestSettings.schema
@@ -91,12 +98,14 @@ struct IngestSettings: Codable, Hashable, Sendable {
         titles = try c.decodeIfPresent(TitleFace.self, forKey: .titles) ?? d.titles
         cameras = try c.decodeIfPresent([KnownCamera].self, forKey: .cameras) ?? d.cameras
         destinations = try c.decodeIfPresent([String].self, forKey: .destinations) ?? d.destinations
+        destinationKinds = try c.decodeIfPresent([String: [MediaCategory]].self, forKey: .destinationKinds) ?? d.destinationKinds
         recentClients = try c.decodeIfPresent([String].self, forKey: .recentClients) ?? d.recentClients
         recentProjects = try c.decodeIfPresent([String].self, forKey: .recentProjects) ?? d.recentProjects
         measuredThroughput = try c.decodeIfPresent(Double.self, forKey: .measuredThroughput) ?? d.measuredThroughput
         writeMHL = try c.decodeIfPresent(Bool.self, forKey: .writeMHL) ?? d.writeMHL
         upload = try c.decodeIfPresent(UploadTarget.self, forKey: .upload) ?? d.upload
         uploadWhenDone = try c.decodeIfPresent(Bool.self, forKey: .uploadWhenDone) ?? d.uploadWhenDone
+        namePresets = try c.decodeIfPresent([SavedNamePreset].self, forKey: .namePresets) ?? d.namePresets
         schema = try c.decodeIfPresent(Int.self, forKey: .schema) ?? 0
     }
 
@@ -129,7 +138,7 @@ struct IngestSettings: Codable, Hashable, Sendable {
             switch self {
             case .eject: "Les éjecter"
             case .keep: "Les laisser branchées"
-            case .offerFormat: "Proposer de les formater"
+            case .offerFormat: "Proposer de les formater ou de les vider"
             }
         }
     }
@@ -146,6 +155,57 @@ struct IngestSettings: Codable, Hashable, Sendable {
             }
         }
     }
+
+    /// Saves the pattern under a name; a name already used takes the new
+    /// pattern, a pattern already saved takes the new name. Says the name
+    /// kept, or nil when there is nothing to save.
+    @discardableResult
+    mutating func savePreset(named name: String, pattern: String) -> String? {
+        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !pattern.isEmpty, NamePreset.matching(pattern) == nil else { return nil }
+        let place = namePresets.firstIndex { $0.pattern == pattern }
+            ?? namePresets.firstIndex { $0.name.caseInsensitiveCompare(title) == .orderedSame }
+            ?? namePresets.count
+        namePresets.insert(SavedNamePreset(name: title, pattern: pattern), at: place)
+        // A rename keeps its place; whatever else held that name or that
+        // pattern goes.
+        namePresets = namePresets.enumerated().filter { i, kept in
+            i == place || (kept.pattern != pattern && kept.name.caseInsensitiveCompare(title) != .orderedSame)
+        }.map(\.element)
+        return title
+    }
+
+    /// Whether a plan made with these settings would be the one made with
+    /// `other`. A change it never reads (the ambiance, the recents, a preset
+    /// saved, the pace of last night) makes no new plan: on a card of ten
+    /// thousand shots each one cost a walk of the drives and a page redrawn.
+    func plansLike(_ other: IngestSettings) -> Bool {
+        initials == other.initials && client == other.client && project == other.project
+            && namePattern == other.namePattern && folderPattern == other.folderPattern
+            && layout == other.layout && padding == other.padding && dayCutoffHour == other.dayCutoffHour
+            && sharedCounter == other.sharedCounter && kindChoices == other.kindChoices
+            && skipAlreadyCopied == other.skipAlreadyCopied && writeMHL == other.writeMHL
+            && destinations == other.destinations && destinationKinds == other.destinationKinds
+    }
+
+    /// What a destination receives.
+    func receives(_ path: String) -> Set<MediaCategory> {
+        guard let kinds = destinationKinds[path], !kinds.isEmpty else { return Set(MediaCategory.allCases) }
+        return Set(kinds)
+    }
+
+    /// Sets what a destination receives; everything is stored as nothing, so
+    /// a drive added later and a drive set back look the same. Never empty: a
+    /// destination that receives nothing is one to remove.
+    mutating func setReceives(_ path: String, _ kinds: Set<MediaCategory>) {
+        guard !kinds.isEmpty else { return }
+        destinationKinds[path] = kinds.count == MediaCategory.allCases.count
+            ? nil
+            : MediaCategory.allCases.filter(kinds.contains)
+    }
+
+    /// Whether any destination is limited to some kinds.
+    var routes: Bool { destinations.contains { receives($0).count < MediaCategory.allCases.count } }
 
     func includes(_ kind: FileKind) -> Bool {
         kindChoices[kind.id] ?? kind.includedByDefault
@@ -175,4 +235,11 @@ struct IngestSettings: Codable, Hashable, Sendable {
         guard !trimmed.isEmpty else { return list }
         return Array(([trimmed] + list.filter { $0.caseInsensitiveCompare(trimmed) != .orderedSame }).prefix(8))
     }
+}
+
+/// A name pattern kept under a name of one's own.
+struct SavedNamePreset: Codable, Hashable, Identifiable, Sendable {
+    var name: String
+    var pattern: String
+    var id: String { pattern }
 }

@@ -48,6 +48,12 @@ struct JournalLine: Codable, Sendable {
     /// On `start` lines, so a folder can still be explained months later.
     var version: String?
     var pattern: String?
+    /// On `start` lines since 0.5, as typed: the shoot a card brought back in
+    /// the evening carries on (`ShootContinuation`).
+    var client: String?
+    var project: String?
+    var initials: String?
+    var days: [ShootDay]?
     /// On `end` lines: whether everything planned was copied and verified.
     /// Before 2026-09-28 an `end` was written only then, so a line without it
     /// is a complete one.
@@ -158,10 +164,26 @@ struct DriveJournal: Sendable {
         /// From the drive's root.
         var path: String
         var size: Int64
+        /// The backup that put it there.
+        var backup: String = ""
     }
 
     /// By fingerprint, the last place that file was put.
     var saved: [String: Saved] = [:]
+    /// The backups that said who they were for, by id, in the order run.
+    var shoots: [Shoot] = []
+
+    /// One backup's `start` line: the shoot it was for.
+    struct Shoot: Sendable {
+        var backup: String
+        var at: Date
+        var client: String
+        var project: String
+        var initials: String
+        var days: [ShootDay]
+        /// Files it verified, counted from its `file` lines.
+        var files = 0
+    }
     /// The base names already handed out, by shoot folder, whether or not the
     /// files are still lying there.
     var namesGiven: [String: [Name]] = [:]
@@ -191,10 +213,18 @@ struct DriveJournal: Sendable {
         var journal = DriveJournal()
         var open: Set<String> = []
         var unfinished = false
+        var shootIndex: [String: Int] = [:]
         for line in Journal.read(on: drive) {
             switch line.kind {
             case .start:
                 open.insert(line.backup)
+                if line.client != nil || line.project != nil {
+                    shootIndex[line.backup] = journal.shoots.count
+                    journal.shoots.append(Shoot(
+                        backup: line.backup, at: line.at, client: line.client ?? "", project: line.project ?? "",
+                        initials: line.initials ?? "", days: line.days ?? []
+                    ))
+                }
             case .end:
                 open.remove(line.backup)
                 if line.complete == false {
@@ -205,7 +235,8 @@ struct DriveJournal: Sendable {
                 }
             case .file:
                 guard let path = line.path, let fingerprint = line.fingerprint else { continue }
-                journal.saved[fingerprint] = Saved(path: path, size: line.size ?? 0)
+                journal.saved[fingerprint] = Saved(path: path, size: line.size ?? 0, backup: line.backup)
+                if let i = shootIndex[line.backup] { journal.shoots[i].files += 1 }
                 let stem = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
                 journal.namesGiven[line.shoot ?? "", default: []].append(Name(stem: stem, category: line.category))
             }

@@ -60,16 +60,20 @@ final class Ingest {
         didSet {
             guard settings != oldValue else { return }
             settings.save()
-            Theme.shared.ambiance = settings.ambiance
-            Theme.shared.titles = settings.titles
+            // Every view reads the theme: set it only when it changes, or a
+            // letter typed in a field redraws every window.
+            if settings.ambiance != Theme.shared.ambiance { Theme.shared.ambiance = settings.ambiance }
+            if settings.titles != Theme.shared.titles { Theme.shared.titles = settings.titles }
             if settings.destinations != oldValue.destinations { refreshDrives() }
-            schedulePlan()
+            if !settings.plansLike(oldValue) { schedulePlan() }
         }
     }
     /// A day typed by hand for the whole backup. Not remembered: the next
     /// night is another day.
     var fixedDay: ShootDay? { didSet { schedulePlan() } }
     private(set) var plan = IngestPlan()
+    /// The preview's rows, made with the plan, off the main thread.
+    private(set) var preview = PreviewRows()
     /// A plan is being made: for the 150 ms after a change, and the time the
     /// drives take to answer. The page says so instead of "rien à copier".
     private(set) var isPlanning = false
@@ -78,6 +82,9 @@ final class Ingest {
     /// Bytes read from the cards per second, smoothed.
     private(set) var speed: Double = 0
     private(set) var remaining: TimeInterval?
+    /// The speed over the whole backup, for the curve on the copying page.
+    private(set) var throughput = ThroughputHistory()
+    private var startedAt = Date()
     /// When a byte last moved. A copy that is slow and one that is stuck look
     /// the same on a percentage; this tells them apart.
     private(set) var lastMoved = Date()
@@ -216,7 +223,11 @@ final class Ingest {
                 if total > 0 {
                     await self.setScanning(id, "Dates des photos… 0 / \(total)")
                 }
+                // Ten times a second at most: every tick redraws the page, and
+                // a card of ten thousand photos ticked four hundred times.
+                let pace = Pace(every: 0.1)
                 scan = CardScanner.dated(scan) { done in
+                    guard done == total || pace.due() else { return }
                     Task { @MainActor in self.setScanning(id, "Dates des photos… \(done) / \(total)") }
                 }
                 let finished = scan
@@ -248,8 +259,11 @@ final class Ingest {
     }
 
     /// The kinds of file on the cards in use, in the order they are shown:
-    /// photos (RAW first), videos, sounds, then what comes with them.
-    var presentKinds: [KindCount] {
+    /// photos (RAW first), videos, sounds, then what comes with them. Counted
+    /// when the cards change, not at each redraw.
+    private(set) var presentKinds: [KindCount] = []
+
+    private func countKinds() -> [KindCount] {
         var counts: [FileKind: KindCount] = [:]
         for card in readyCards {
             for group in card.scan!.groups {
@@ -278,6 +292,7 @@ final class Ingest {
 
     func removeDrive(_ drive: Drive) {
         settings.destinations.removeAll { $0 == drive.url.path }
+        settings.destinationKinds[drive.url.path] = nil
     }
 
     private func refreshDrives() {
@@ -313,35 +328,60 @@ final class Ingest {
         planGeneration += 1
         let generation = planGeneration
         let sources = readyCards.map { card in
-            PlanSource(id: card.id, volumeName: card.name, cameraLabel: card.cameraLabel, groups: card.scan!.groups)
+            PlanSource(
+                id: card.id, volumeName: card.name, cameraLabel: card.cameraLabel, groups: card.scan!.groups,
+                orphans: card.scan!.orphans, unknown: card.scan!.unknown, setAside: card.scan!.setAside
+            )
+        }
+        let readyIDs = sources.map(\.id)
+        if readyIDs != countedCards || settings.dayCutoffHour != countedCutoff {
+            countedCards = readyIDs
+            countedCutoff = settings.dayCutoffHour
+            presentKinds = countKinds()
+            let dates = readyCards.flatMap { $0.scan!.groups.map(\.captureDate) }
+            detectedDays = Array(Set(dates.map { ShootDay(date: $0, cutoffHour: settings.dayCutoffHour) })).sorted()
         }
         let settings = settings
         let fixedDay = fixedDay
+        let days = fixedDay.map { [$0] } ?? detectedDays
         let drives = onlineDrives.map(\.url)
         planTask = Task.detached(priority: .userInitiated) {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            let plan = {
-                var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives, isCancelled: { Task.isCancelled })
-                plan.drives = drives.map(\.path)
-                plan.generation = generation
-                plan.namePattern = settings.namePattern
-                plan.writesMHL = settings.writeMHL
-                return plan
-            }()
+            var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives, isCancelled: { Task.isCancelled })
+            plan.drives = drives.map(\.path)
+            plan.generation = generation
+            plan.namePattern = settings.namePattern
+            plan.client = settings.client
+            plan.project = settings.project
+            plan.initials = settings.initials
+            plan.writesMHL = settings.writeMHL
             guard !Task.isCancelled else { return }
+            plan.continuation = ShootContinuation.find(sources: sources, days: days, settings: settings, drives: drives)
+            let preview = PreviewRows(plan: plan, sources: sources, settings: settings)
+            guard !Task.isCancelled else { return }
+            let finished = plan
             await MainActor.run {
                 guard generation == self.planGeneration else { return }
-                self.plan = plan
+                self.plan = finished
+                self.preview = preview
                 self.isPlanning = false
             }
         }
     }
 
     /// The day the shots belong to when nothing is typed: the cards' own.
-    var detectedDays: [ShootDay] {
-        let dates = readyCards.flatMap { $0.scan!.groups.map(\.captureDate) }
-        return Array(Set(dates.map { ShootDay(date: $0, cutoffHour: settings.dayCutoffHour) })).sorted()
+    private(set) var detectedDays: [ShootDay] = []
+    /// The cards and the cutoff the two lists above were counted for.
+    private var countedCards: [String]?
+    private var countedCutoff = -1
+
+    /// Puts back the client and project of the shoot these cards carry on,
+    /// and the initials if none are typed.
+    func continueShoot(_ shoot: ShootContinuation) {
+        settings.client = shoot.client
+        settings.project = shoot.project
+        if settings.initials.trimmingCharacters(in: .whitespaces).isEmpty { settings.initials = shoot.initials }
     }
 
     /// Why the button is not ready, the most useful first.
@@ -352,7 +392,7 @@ final class Ingest {
             planning: isPlanning || !isCurrent,
             ready: readyCards.count,
             cardWithoutLetter: readyCards.contains { $0.cameraLabel.isEmpty },
-            drives: drives.map { .init(name: $0.name, isOnline: $0.isOnline, available: $0.available, fileSystem: $0.fileSystem, volume: $0.volume) },
+            drives: drives.map { .init(name: $0.name, isOnline: $0.isOnline, available: $0.available, fileSystem: $0.fileSystem, volume: $0.volume, path: $0.url.path) },
             settings: settings,
             plan: plan
         ).blockers
@@ -414,6 +454,77 @@ final class Ingest {
         }
     }
 
+    /// The cards whose copied files may be deleted from the done page: asked
+    /// for in the settings, mounted, still the volume that was read, and told
+    /// "formatable" or "à vérifier". What makes a card "à vérifier" is what
+    /// nobody could tick, and that is never deleted, only the files on every
+    /// drive. A card told "ne pas formater" is never offered it.
+    var cleanableCards: [Card] {
+        guard settings.whenDone == .offerFormat else { return [] }
+        return readyCards.filter { card in
+            guard card.isVolume, let identity = verifiedIdentities[card.id], identity == card.identity,
+                  let level = verdicts.first(where: { $0.cardID == card.id })?.level
+            else { return false }
+            return level != .hold && copiedFiles(of: card) > 0
+        }
+    }
+
+    /// How many files of a card the last backup knows to be on every drive:
+    /// copied tonight, or found there already.
+    func copiedFiles(of card: Card) -> Int {
+        let verified = Set((lastBackup?.entries.values.flatMap { $0 } ?? []).map(\.fingerprint))
+        return runningPlan.groups.filter { $0.sourceID == card.id }.reduce(0) { count, group in
+            switch group.status {
+            case .new: count + group.files.filter { verified.contains($0.file.fingerprint) }.count
+            case .alreadyCopied: count + group.group.files.count - group.leftOut.count
+            default: count
+            }
+        }
+    }
+
+    /// Deletes from one card the files that are on every drive, after the
+    /// page asked. Each is checked again first (`CardCleanup`); the card is
+    /// ejected afterwards, as a formatted one is.
+    func deleteCopied(_ card: Card) async {
+        guard formatting == nil,
+              cleanableCards.contains(where: { $0.id == card.id }),
+              let identity = verifiedIdentities[card.id],
+              let report = lastBackup
+        else { return }
+        formatting = card.id
+        let plan = runningPlan
+        let drives = runningPlan.drives.map { URL(fileURLWithPath: $0) }
+        let avoiding = Set(self.drives.map(\.volume))
+        do {
+            let items = await Task.detached(priority: .userInitiated) {
+                CardCleanup.items(cardID: card.id, plan: plan, report: report, drives: drives)
+            }.value
+            let result = try await CardCleanup.run(items, card: card.url, identity: identity, avoiding: avoiding)
+            var message = "« \(card.name) » : \(Format.count(result.deleted, "fichier")) supprimé\(result.deleted > 1 ? "s" : ""), \(Format.bytes(result.bytes)) libérés."
+            if !result.kept.isEmpty {
+                let first = result.kept[0]
+                message += " \(Format.count(result.kept.count, "fichier")) \(result.kept.count > 1 ? "restent" : "reste") dessus (\((first.path as NSString).lastPathComponent) : \(first.reason))."
+            }
+            if result.kept.isEmpty, (try? await VolumeWatcher.eject(card.url, keeping: keptMounts(except: [card]))) != nil {
+                message += " Elle est éjectée."
+            }
+            formatMessages.append(message)
+        } catch {
+            formatMessages.append("Rien n'a été supprimé de « \(card.name) » : \(error.localizedDescription)")
+        }
+        verifiedIdentities[card.id] = nil
+        formatting = nil
+    }
+
+    /// The mount points an eject must leave alone: the cards that are not
+    /// being let go, and the drives.
+    private func keptMounts(except leaving: [Card]) -> Set<String> {
+        let going = Set(leaving.map(\.id))
+        var kept = Set(cards.filter { $0.isVolume && !going.contains($0.id) }.map(\.url.path))
+        kept.formUnion(drives.map(\.volume))
+        return kept
+    }
+
     /// Each card's serial when its verdict was given, by card. Only these
     /// may be formatted, and only while the reader still holds them.
     private var verifiedIdentities: [String: String] = [:]
@@ -473,6 +584,8 @@ final class Ingest {
         doneRate = 0
         remaining = nil
         lastSample = nil
+        throughput = ThroughputHistory()
+        startedAt = .now
         lastMoved = .now
         ejectMessage = nil
         ejected = false
@@ -516,6 +629,11 @@ final class Ingest {
                 speed = speed == 0 ? readRate : speed * 0.8 + readRate * 0.2
                 doneRate = doneRate == 0 ? rate : doneRate * 0.8 + rate * 0.2
                 if doneRate > 0 { remaining = Double(state.total - state.done) / doneRate }
+                // What was read, from the card then from each drive: reading
+                // back is half the night's work and has its own pace.
+                if !state.quiet {
+                    throughput.add(at: now.timeIntervalSince(startedAt), seconds: dt, bytes: state.done - last.done, verifying: state.verifying)
+                }
                 lastSample = (now, state.read, state.done)
             }
         } else {
@@ -567,22 +685,23 @@ final class Ingest {
 
     var isUploading: Bool { if case .sending = uploadPhase { true } else { false } }
 
-    /// The first drive of the last backup still plugged in: the copy that is
-    /// sent is a verified one, never the card read again.
-    private var uploadSource: URL? {
-        runningPlan.drives.map { URL(fileURLWithPath: $0) }.first { FileManager.default.fileExists(atPath: $0.path) }
+    /// The drives of the last backup still plugged in, first one first: the
+    /// copy that is sent is a verified one, never the card read again. Each
+    /// file is read from the first of them that holds it.
+    private var uploadSources: [URL] {
+        runningPlan.drives.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     var canUpload: Bool {
         guard settings.upload.isReady, !isUploading, let lastBackup, !lastBackup.entries.isEmpty else { return false }
-        return uploadSource != nil
+        return !uploadSources.isEmpty
     }
 
     func startUpload() {
-        guard canUpload, let report = lastBackup, let drive = uploadSource else { return }
+        guard canUpload, let report = lastBackup else { return }
         let target = settings.upload
         let password = target.isServer && !target.user.isEmpty ? Keychain.password(for: target.keychainAccount) : nil
-        let items = Upload.items(of: report, on: drive)
+        let items = Upload.items(of: report, on: uploadSources)
         guard !items.isEmpty else { return }
         uploadCancel.reset()
         uploadProgress = UploadProgress()
@@ -661,7 +780,7 @@ final class Ingest {
         let file = TransferReport.fileName(report.recorded)
         for path in runningPlan.drives {
             let drive = URL(fileURLWithPath: path)
-            for (folder, entries) in report.entries.sorted(by: { $0.key < $1.key }) {
+            for (folder, entries) in (report.onDrives[path] ?? [:]).sorted(by: { $0.key < $1.key }) {
                 let html = TransferReport.html(
                     shoot: folder, report: report, entries: entries, cards: cards,
                     drives: names, version: Bundle.main.version
@@ -681,14 +800,14 @@ final class Ingest {
     private func remember(_ report: BackupReport) {
         let seconds = report.finished.timeIntervalSince(report.started)
         guard report.succeeded, report.bytesCopied >= 256 << 20, seconds > 5 else { return }
-        let moved = Double(report.bytesCopied) * Double(1 + runningPlan.drives.count)
+        let moved = Double(report.bytesMoved)
         settings.measuredThroughput = moved / seconds
     }
 
     /// How long the plan on screen should take, from the last backup's pace.
     var estimatedDuration: TimeInterval? {
         guard settings.measuredThroughput > 0, plan.bytesToCopy > 0 else { return nil }
-        let moved = Double(plan.bytesToCopy) * Double(1 + max(onlineDrives.count, 1))
+        let moved = Double(plan.bytesMoved)
         return moved / settings.measuredThroughput
     }
 
@@ -719,21 +838,29 @@ final class Ingest {
         if !NSApp.isActive { NSApp.requestUserAttention(.informationalRequest) }
     }
 
-    /// Ejects the cards that were backed up. Folders added by hand are left.
+    /// Ejects the cards that were backed up. Folders added by hand are left,
+    /// and so is every card that is not being let go, even one sharing a disk.
     func ejectCards() async {
-        let volumes = ejectableCards.filter(\.isVolume).map(\.url)
+        let leaving = ejectableCards.filter(\.isVolume)
+        let kept = keptMounts(except: leaving)
         var refused: [String] = []
-        for url in volumes {
+        var unmounted: [String] = []
+        for card in leaving {
             do {
-                try await VolumeWatcher.eject(url)
+                if try await VolumeWatcher.eject(card.url, keeping: kept) == .unmounted { unmounted.append(card.name) }
             } catch {
-                refused.append(url.lastPathComponent)
+                refused.append(card.name)
             }
         }
-        ejected = refused.isEmpty && !volumes.isEmpty
-        ejectMessage = refused.isEmpty
-            ? (volumes.isEmpty ? nil : volumes.count > 1 ? "Cartes éjectées." : "Carte éjectée.")
-            : "« \(refused.joined(separator: "», «")) » n'a pas pu être éjectée : une autre app la lit peut-être."
+        ejected = refused.isEmpty && !leaving.isEmpty
+        if !refused.isEmpty {
+            ejectMessage = "« \(refused.joined(separator: " », « ")) » n'a pas pu être éjectée : une autre app la lit peut-être."
+        } else if !unmounted.isEmpty {
+            ejectMessage = (leaving.count > 1 ? "Cartes éjectées." : "Carte éjectée.")
+                + " L'appareil de « \(unmounted.joined(separator: " », « ")) » garde son câble : débranche-le, la carte est démontée."
+        } else {
+            ejectMessage = leaving.isEmpty ? nil : leaving.count > 1 ? "Cartes éjectées." : "Carte éjectée."
+        }
     }
 
     /// Back to the preparation, with the plan made again so what was just
@@ -751,6 +878,22 @@ final class Ingest {
         volumesChanged()
         // A card still here may have been shot on since it was read.
         for card in cards where known.contains(card.id) { rescan(card) }
+    }
+}
+
+/// Says yes at most once per interval, from any thread.
+final class Pace: @unchecked Sendable {
+    private let lock = NSLock()
+    private let every: TimeInterval
+    private var last = Date.distantPast
+    init(every: TimeInterval) { self.every = every }
+    func due() -> Bool {
+        lock.withLock {
+            let now = Date()
+            guard now.timeIntervalSince(last) >= every else { return false }
+            last = now
+            return true
+        }
     }
 }
 

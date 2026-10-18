@@ -134,25 +134,44 @@ struct UploadReport: Sendable {
 }
 
 enum Upload {
-    /// What tonight's backup verified, read from one drive, followed by the
+    /// What tonight's backup verified, read from the drives, followed by the
     /// records of the night (manifest, CSV, report), so the copy sent can be
     /// asked months later as the drives can.
-    static func items(of report: BackupReport, on drive: URL) -> [UploadItem] {
+    ///
+    /// Each file is read from the first drive that holds it: with the photos
+    /// on one disk and the videos on another, both halves are sent. Each
+    /// drive's records list its own half and bear the same names, so a second
+    /// drive's are sent with its name added rather than over the first's.
+    static func items(of report: BackupReport, on drives: [URL]) -> [UploadItem] {
         var items: [UploadItem] = []
+        var taken: Set<String> = []
         let stamp = History.stamp(report.recorded)
         let page = TransferReport.fileName(report.recorded)
-        for (folder, entries) in report.entries.sorted(by: { $0.key < $1.key }) {
-            let shoot = folder.isEmpty ? drive : drive.appendingPathComponent(folder)
+        // A report that does not say which drive holds what lists everything
+        // under the first drive.
+        let byDrive = report.onDrives.isEmpty && !drives.isEmpty ? [drives[0].path: report.entries] : report.onDrives
+        for (folder, _) in report.entries.sorted(by: { $0.key < $1.key }) {
             func relative(_ path: String) -> String { folder.isEmpty ? path : folder + "/" + path }
-            for entry in entries {
-                items.append(UploadItem(local: shoot.appendingPathComponent(entry.path), relative: relative(entry.path), size: entry.size, xxh64: entry.xxh64))
-            }
-            let records = shoot.appendingPathComponent(History.folderName)
-            let names = ((try? FileManager.default.contentsOfDirectory(atPath: records.path)) ?? []).sorted()
-            for name in names where name.hasPrefix(stamp) || name == page {
-                let url = records.appendingPathComponent(name)
-                guard let size = size(of: url) else { continue }
-                items.append(UploadItem(local: url, relative: relative(History.folderName + "/" + name), size: size, xxh64: ""))
+            for drive in drives {
+                guard let entries = byDrive[drive.path]?[folder] else { continue }
+                let shoot = folder.isEmpty ? drive : drive.appendingPathComponent(folder)
+                for entry in entries where taken.insert(relative(entry.path).lowercased()).inserted {
+                    items.append(UploadItem(local: shoot.appendingPathComponent(entry.path), relative: relative(entry.path), size: entry.size, xxh64: entry.xxh64))
+                }
+                let records = shoot.appendingPathComponent(History.folderName)
+                let names = ((try? FileManager.default.contentsOfDirectory(atPath: records.path)) ?? []).sorted()
+                for name in names where name.hasPrefix(stamp) || name == page {
+                    let url = records.appendingPathComponent(name)
+                    guard let size = size(of: url) else { continue }
+                    var sent = relative(History.folderName + "/" + name)
+                    if !taken.insert(sent.lowercased()).inserted {
+                        let ext = (name as NSString).pathExtension
+                        let tag = Sanitize.field(drive.lastPathComponent)
+                        sent = relative(History.folderName + "/" + (name as NSString).deletingPathExtension + "-" + tag + (ext.isEmpty ? "" : "." + ext))
+                        guard taken.insert(sent.lowercased()).inserted else { continue }
+                    }
+                    items.append(UploadItem(local: url, relative: sent, size: size, xxh64: ""))
+                }
             }
         }
         return items

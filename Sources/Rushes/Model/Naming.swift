@@ -126,9 +126,14 @@ struct NameTemplate: Hashable, Sendable {
 
     let pattern: String
     let parts: [Part]
+    /// Each folder of a pattern holding slashes, read once.
+    private let folders: [NameTemplate]?
 
     init(_ pattern: String) {
         self.pattern = pattern
+        folders = pattern.contains("/")
+            ? pattern.split(separator: "/", omittingEmptySubsequences: true).map { NameTemplate(String($0)) }
+            : nil
         var parts: [Part] = []
         var literal = ""
         var rest = Substring(pattern)
@@ -172,8 +177,8 @@ struct NameTemplate: Hashable, Sendable {
 
     /// A folder pattern may hold slashes: each piece is one folder.
     func renderPath(_ values: NameValues) -> String {
-        pattern.split(separator: "/", omittingEmptySubsequences: true)
-            .map { NameTemplate(String($0)).render(values) }
+        guard let folders else { return render(values) }
+        return folders.map { $0.render(values) }
             .filter { !$0.isEmpty }
             .joined(separator: "/")
     }
@@ -290,14 +295,22 @@ enum Sanitize {
 
     /// What no file name may hold on a Mac, on exFAT or on Windows.
     static func fileName(_ text: String) -> String {
-        let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|").union(.controlCharacters)
+        // Run for every piece of every name of every plan: the set is built
+        // once, and a piece with nothing to replace is returned as it came.
+        guard text.unicodeScalars.contains(where: forbidden.contains) else { return text }
         return String(text.unicodeScalars.map { forbidden.contains($0) ? "-" : Character($0) })
     }
+
+    private static let forbidden = CharacterSet(charactersIn: "/\\:*?\"<>|").union(.controlCharacters)
 
     /// An empty field leaves its separators behind: `260921_SR__0001` becomes
     /// `260921_SR_0001`, and nothing starts or ends with one.
     static func collapse(_ name: String) -> String {
         var out = name
+        let edges: Set<Character> = ["_", "-", " ", "."]
+        if !out.contains("__"), !out.contains("--"), out.first.map({ !edges.contains($0) }) ?? true, out.last.map({ !edges.contains($0) }) ?? true {
+            return out
+        }
         while out.contains("__") { out = out.replacingOccurrences(of: "__", with: "_") }
         while out.contains("--") { out = out.replacingOccurrences(of: "--", with: "-") }
         out = out.trimmingCharacters(in: CharacterSet(charactersIn: "_- ."))
@@ -380,11 +393,26 @@ struct FolderLayout: Codable, Hashable, Sendable {
     }
 
     func folder(for role: FileRole, anchor: FileRole, values: NameValues) -> String {
-        switch role {
-        case .sidecar, .thumbnail:
-            return anchor.isPrimary ? folder(for: anchor, anchor: anchor, values: values) : ""
-        default:
-            return NameTemplate(self[role]).renderPath(values)
+        templates.folder(for: role, anchor: anchor, values: values)
+    }
+
+    /// Each kind's pattern read once, for a plan that files thousands of shots.
+    var templates: Templates { Templates(self) }
+
+    struct Templates: Sendable {
+        private let byRole: [FileRole: NameTemplate]
+
+        init(_ layout: FolderLayout) {
+            byRole = Dictionary(uniqueKeysWithValues: FolderLayout.roles.map { ($0, NameTemplate(layout[$0])) })
+        }
+
+        func folder(for role: FileRole, anchor: FileRole, values: NameValues) -> String {
+            switch role {
+            case .sidecar, .thumbnail:
+                return anchor.isPrimary ? folder(for: anchor, anchor: anchor, values: values) : ""
+            default:
+                return byRole[role]?.renderPath(values) ?? ""
+            }
         }
     }
 }

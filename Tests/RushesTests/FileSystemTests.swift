@@ -173,10 +173,16 @@ struct FileSystemTests {
         settings.initials = "SR"
         settings.client = "Kaffi"
         settings.project = "Lexus"
+        let ssd = try box.folder("SSD")
+        let photos = try box.folder("PHOTOS")
+        // The photos' own drive receives no clip, so it is not held to it.
+        settings.destinations = [ssd.path, photos.path]
+        settings.setReceives(photos.path, [.photo])
         let plan = Planner.plan(
             sources: [PlanSource(id: card.path, volumeName: "CARD", cameraLabel: "A", groups: scan.groups)],
-            settings: settings, fixedDay: nil, drives: [try box.folder("SSD")]
+            settings: settings, fixedDay: nil, drives: [ssd, photos]
         )
-        #expect(plan.tooBigForFAT?.file.name == "C0001.MP4")
+        #expect(plan.tooBigForFAT(on: ssd.path)?.file.name == "C0001.MP4")
+        #expect(plan.tooBigForFAT(on: photos.path) == nil)
     }
 }

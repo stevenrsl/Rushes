@@ -7,6 +7,11 @@ struct PlanSource: Sendable {
     /// A, B, C: the `{CAM}` of the name.
     let cameraLabel: String
     let groups: [MediaGroup]
+    /// What the card holds besides its shots, for the preview's "Laissés sur
+    /// la carte": the planner itself never reads them.
+    var orphans: [MediaFile] = []
+    var unknown: [UnknownFile] = []
+    var setAside: [UnknownFile] = []
 }
 
 struct PlannedFile: Identifiable, Hashable, Sendable {
@@ -27,6 +32,9 @@ enum GroupStatus: Hashable, Sendable {
     /// None of its pictures, clips or sounds is of a kind ticked: it stays on
     /// the card with its sidecars, and takes no number.
     case unticked
+    /// No destination receives its kind (photos, videos, sounds). It holds the
+    /// backup back, as a conflict does: a shot no drive takes is not saved.
+    case noDrive
 }
 
 struct PlannedGroup: Identifiable, Hashable, Sendable {
@@ -45,17 +53,25 @@ struct PlannedGroup: Identifiable, Hashable, Sendable {
     /// folder: a card kept from yesterday is recognised under yesterday's
     /// client, and stays there.
     var savedIn: String?
+    /// The destinations it goes to, by path: every drive unless some receive
+    /// only photos, videos or sounds. Skipped, checked and verified on these.
+    var drives: [String] = []
 
     var id: String { sourceID + "/" + group.key }
     var size: Int64 { files.reduce(0) { $0 + $1.file.size } }
 }
 
 struct IngestPlan: Sendable {
-    var groups: [PlannedGroup] = []
+    var groups: [PlannedGroup] = [] { didSet { summarize() } }
     var shootFolders: [String] = []
     /// The name pattern it used, written into the journal so a folder can be
     /// explained months later.
     var namePattern = ""
+    /// The client, project and initials as typed, for the journal's `start`
+    /// line: an evening card carries on the morning's shoot by them.
+    var client = ""
+    var project = ""
+    var initials = ""
     /// Whether each shoot folder gets its ASC MHL generation.
     var writesMHL = false
     /// The drives this plan was made for, and the change it was made from: a
@@ -64,26 +80,60 @@ struct IngestPlan: Sendable {
     /// otherwise be copied under the name before it.
     var drives: [String] = []
     var generation = 0
+    /// The shoot these cards carry on, when the drives remember one: see
+    /// `ShootContinuation`.
+    var continuation: ShootContinuation?
 
-    var toCopy: [PlannedGroup] { groups.filter { $0.status == .new } }
-    var filesToCopy: Int { toCopy.reduce(0) { $0 + $1.files.count } }
-    var bytesToCopy: Int64 { toCopy.reduce(0) { $0 + $1.size } }
-    var alreadyCopied: Int { groups.filter { $0.status == .alreadyCopied }.count }
-    var unticked: Int { groups.filter { $0.status == .unticked }.count }
-    var conflicts: [PlannedGroup] {
-        groups.filter { if case .conflict = $0.status { true } else { false } }
+    // Counted once per plan rather than at each of the page's many reads:
+    // every redraw asked for them again, over every shot of every card.
+    private(set) var toCopy: [PlannedGroup] = []
+    private(set) var filesToCopy = 0
+    private(set) var bytesToCopy: Int64 = 0
+    private(set) var alreadyCopied = 0
+    private(set) var unticked = 0
+    private(set) var conflicts: [PlannedGroup] = []
+    private(set) var leftOutCount = 0
+    private(set) var days: [ShootDay] = []
+    /// Kinds of shot that no destination receives.
+    private(set) var unrouted: [MediaCategory] = []
+    /// Bytes read from the cards plus every copy written and read back: what
+    /// the bar and the estimate count, now that drives may take different shares.
+    private(set) var bytesMoved: Int64 = 0
+
+    init(groups: [PlannedGroup] = [], shootFolders: [String] = []) {
+        self.groups = groups
+        self.shootFolders = shootFolders
+        summarize()
     }
-    var leftOutCount: Int { groups.reduce(0) { $0 + $1.leftOut.count } }
-    var days: [ShootDay] { Array(Set(toCopy.map(\.day))).sorted() }
+
+    private mutating func summarize() {
+        toCopy = groups.filter { $0.status == .new }
+        filesToCopy = toCopy.reduce(0) { $0 + $1.files.count }
+        bytesToCopy = toCopy.reduce(0) { $0 + $1.size }
+        alreadyCopied = groups.filter { $0.status == .alreadyCopied }.count
+        unticked = groups.filter { $0.status == .unticked }.count
+        conflicts = groups.filter { if case .conflict = $0.status { true } else { false } }
+        leftOutCount = groups.reduce(0) { $0 + $1.leftOut.count }
+        days = Array(Set(toCopy.map(\.day))).sorted()
+        let missing = Set(groups.filter { $0.status == .noDrive }.map(\.group.category))
+        unrouted = MediaCategory.allCases.filter(missing.contains)
+        bytesMoved = toCopy.reduce(0) { $0 + $1.size * Int64(1 + $1.drives.count) }
+    }
+
+    /// The bytes one destination receives.
+    func bytes(to drive: String) -> Int64 {
+        toCopy.reduce(0) { $0 + ($1.drives.contains(drive) ? $1.size : 0) }
+    }
 
     /// FAT32 keeps a file's size in 32 bits: one byte short of 4 GiB is the
     /// most it can hold. A clip over that fails mid-night with `EFBIG`, and
     /// that stops the whole backup.
     static let fatLimit: Int64 = 0xFFFF_FFFF
 
-    /// The first file too big for a FAT32 drive, to be said before ⌘↩.
-    var tooBigForFAT: PlannedFile? {
-        toCopy.lazy.flatMap(\.files).first { $0.file.size > Self.fatLimit }
+    /// The first file too big for a FAT32 drive, to be said before ⌘↩: only
+    /// among what that drive receives.
+    func tooBigForFAT(on drive: String) -> PlannedFile? {
+        toCopy.lazy.filter { $0.drives.contains(drive) }.flatMap(\.files).first { $0.file.size > Self.fatLimit }
     }
 }
 
@@ -160,6 +210,7 @@ enum Planner {
     ) -> IngestPlan {
         let template = NameTemplate(settings.namePattern)
         let folderTemplate = NameTemplate(settings.folderPattern)
+        let layout = settings.layout.templates
         let initials = Sanitize.code(settings.initials)
         let client = Sanitize.field(settings.client)
         let project = Sanitize.field(settings.project)
@@ -230,19 +281,30 @@ enum Planner {
                 ))
                 continue
             }
+            // The destinations that take this kind of shot. A photo that only
+            // the photo disk receives is skipped, numbered against and checked
+            // there; the video disk has nothing to say about it.
+            let targets = drives.filter { settings.receives($0.path).contains(group.category) }
+            guard !targets.isEmpty || drives.isEmpty else {
+                planned.append(PlannedGroup(
+                    group: group, sourceID: source.id, volumeName: source.volumeName, day: day,
+                    baseName: "", shootFolder: shootFolder, files: [], leftOut: leftOut, status: .noDrive
+                ))
+                continue
+            }
             if !folders.contains(shootFolder) { folders.append(shootFolder) }
 
             // Tonight's folder knows a card that was not formatted; the drive's
             // journal knows it whatever it was filed under, so renaming the
             // client does not file yesterday's shots under tonight's.
-            let copiedEverywhere = !drives.isEmpty && drives.allSatisfy { drive in
+            let copiedEverywhere = !targets.isEmpty && targets.allSatisfy { drive in
                 let known = indexFor(drive, shootFolder).fingerprints
                 let journal = journalFor(drive)
                 return kept.allSatisfy { known.contains($0.fingerprint) || journal.holds($0.fingerprint, on: drive) }
             }
             if copiedEverywhere, skipSaved {
                 var folder: String?
-                for drive in drives {
+                for drive in targets {
                     if let path = journalFor(drive).saved[anchor.fingerprint]?.path {
                         folder = (path as NSString).deletingLastPathComponent
                         break
@@ -251,7 +313,7 @@ enum Planner {
                 planned.append(PlannedGroup(
                     group: group, sourceID: source.id, volumeName: source.volumeName, day: day,
                     baseName: "", shootFolder: shootFolder, files: [], leftOut: leftOut, status: .alreadyCopied,
-                    savedIn: folder ?? shootFolder
+                    savedIn: folder ?? shootFolder, drives: targets.map(\.path)
                 ))
                 continue
             }
@@ -290,20 +352,21 @@ enum Planner {
             var files: [PlannedFile] = []
             var status = GroupStatus.new
             for file in kept {
-                let folder = settings.layout.folder(for: file.role, anchor: anchor.role, values: values)
+                let folder = layout.folder(for: file.role, anchor: anchor.role, values: values)
                 let name = baseName + suffix(of: file, anchorStem: anchorStem) + (file.ext.isEmpty ? "" : "." + file.ext)
                 let inShoot = folder.isEmpty ? name : folder + "/" + name
                 let path = shootFolder.isEmpty ? inShoot : shootFolder + "/" + inShoot
                 if !taken.insert(path.lowercased()).inserted {
                     status = .conflict("« \(name) » sort deux fois de ce modèle")
-                } else if let drive = drives.first(where: { indexFor($0, shootFolder).paths.contains(inShoot.lowercased()) }) {
+                } else if let drive = targets.first(where: { indexFor($0, shootFolder).paths.contains(inShoot.lowercased()) }) {
                     status = .conflict("« \(name) » existe déjà sur \(drive.lastPathComponent)")
                 }
                 files.append(PlannedFile(file: file, relativePath: path))
             }
             planned.append(PlannedGroup(
                 group: group, sourceID: source.id, volumeName: source.volumeName, day: day,
-                baseName: baseName, shootFolder: shootFolder, files: files, leftOut: leftOut, status: status
+                baseName: baseName, shootFolder: shootFolder, files: files, leftOut: leftOut, status: status,
+                drives: targets.map(\.path)
             ))
         }
         return IngestPlan(groups: planned, shootFolders: folders)

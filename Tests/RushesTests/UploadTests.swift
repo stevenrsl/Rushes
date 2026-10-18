@@ -30,7 +30,7 @@ struct UploadTests {
     func items() throws {
         let box = try Sandbox()
         let (drive, report) = try night(box)
-        let items = Upload.items(of: report, on: drive)
+        let items = Upload.items(of: report, on: [drive])
 
         #expect(items.map(\.relative) == [
             "261015_Kaffi_Lexus/VIDEO/261015_SR_Kaffi_Lexus_0001_A.MP4",
@@ -50,7 +50,7 @@ struct UploadTests {
         var target = UploadTarget()
         target.kind = .folder
         target.folder = cloud.path
-        let items = Upload.items(of: report, on: drive)
+        let items = Upload.items(of: report, on: [drive])
 
         let first = Upload.run(items, to: target, password: nil, isCancelled: { false }) { _ in }
         #expect(first.succeeded)
@@ -72,7 +72,7 @@ struct UploadTests {
         let box = try Sandbox()
         let (drive, report) = try night(box)
         let cloud = try box.folder("Cloud")
-        let items = Upload.items(of: report, on: drive)
+        let items = Upload.items(of: report, on: [drive])
         let taken = try box.write(items[0].relative, in: cloud, size: 12, date: Date())
         var target = UploadTarget()
         target.kind = .folder
@@ -91,7 +91,7 @@ struct UploadTests {
         target.kind = .folder
         target.folder = box.root.appendingPathComponent("Nowhere").path
 
-        let result = Upload.run(Upload.items(of: report, on: drive), to: target, password: nil, isCancelled: { false }) { _ in }
+        let result = Upload.run(Upload.items(of: report, on: [drive]), to: target, password: nil, isCancelled: { false }) { _ in }
         #expect(result.stopped != nil)
         #expect(result.sent == 0)
     }

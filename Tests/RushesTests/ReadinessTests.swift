@@ -27,8 +27,8 @@ struct ReadinessTests {
         return (plan, box)
     }
 
-    private func drive(_ name: String, volume: String? = nil, free: Int64? = 1 << 40, fs: String = "apfs", online: Bool = true) -> Readiness.Drive {
-        .init(name: name, isOnline: online, available: free, fileSystem: fs, volume: volume ?? "/Volumes/\(name)")
+    private func drive(_ name: String, volume: String? = nil, free: Int64? = 1 << 40, fs: String = "apfs", online: Bool = true, path: String = "") -> Readiness.Drive {
+        .init(name: name, isOnline: online, available: free, fileSystem: fs, volume: volume ?? "/Volumes/\(name)", path: path)
     }
 
     private func gate(_ plan: IngestPlan, _ settings: IngestSettings, drives: [Readiness.Drive], cards: Int = 1, scanning: Bool = false, planning: Bool = false, noLetter: Bool = false) -> [String] {
@@ -65,8 +65,9 @@ struct ReadinessTests {
         let s = settings()
         let (plan, _) = try plan(s)
         let needed = plan.bytesToCopy + Readiness.margin(for: plan.bytesToCopy)
-        #expect(gate(plan, s, drives: [drive("SSD", free: needed)]).isEmpty)
-        #expect(gate(plan, s, drives: [drive("SSD", free: needed - 1)]).contains { $0.hasPrefix("Pas assez de place") })
+        let path = try #require(plan.toCopy.first?.drives.first)
+        #expect(gate(plan, s, drives: [drive("SSD", free: needed, path: path)]).isEmpty)
+        #expect(gate(plan, s, drives: [drive("SSD", free: needed - 1, path: path)]).contains { $0.hasPrefix("Pas assez de place") })
     }
 
     @Test("a drive not plugged in, and none at all, are said")

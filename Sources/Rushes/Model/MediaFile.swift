@@ -40,8 +40,25 @@ enum FileRole: String, Codable, Sendable, CaseIterable {
     var isPhoto: Bool { self == .raw || self == .jpeg || self == .heif }
 }
 
-enum MediaCategory: String, Codable, Sendable {
+enum MediaCategory: String, Codable, CaseIterable, Sendable {
     case photo, video, audio
+
+    /// "les photos", as a sentence names them.
+    var plural: String {
+        switch self {
+        case .photo: "les photos"
+        case .video: "les vidéos"
+        case .audio: "les sons"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .photo: "Photos"
+        case .video: "Vidéos"
+        case .audio: "Sons"
+        }
+    }
 }
 
 /// What the person ticks to copy or not: a role and an extension. ARW and JPG
@@ -175,18 +192,39 @@ struct MediaFile: Identifiable, Hashable, Sendable {
     /// on the card, which is what makes it part of the fingerprint.
     let modified: Date
     let created: Date
-
-    var id: String { url.path }
-    var name: String { url.lastPathComponent }
-    var stem: String { url.deletingPathExtension().lastPathComponent }
-    var ext: String { url.pathExtension }
-    var kind: FileKind { FileKind(role: role, ext: ext.uppercased()) }
-
+    // Worked out once, when the card is read: a plan is made again at every
+    // keystroke and reads each of them several times per file, and asking a
+    // URL for its name costs more than the rest of the plan put together.
+    let id: String
+    let name: String
+    let stem: String
+    let ext: String
+    let kind: FileKind
     /// What says "this exact file was already backed up", across ingests and
     /// Macs: the name the camera gave it, its size and when it was written.
-    var fingerprint: String {
+    let fingerprint: String
+
+    init(url: URL, relativePath: String, size: Int64, role: FileRole, modified: Date, created: Date) {
+        self.url = url
+        self.relativePath = relativePath
+        self.size = size
+        self.role = role
+        self.modified = modified
+        self.created = created
+        id = url.path
+        name = url.lastPathComponent
+        stem = url.deletingPathExtension().lastPathComponent
+        ext = url.pathExtension
+        kind = FileKind(role: role, ext: ext.uppercased())
         // Whole seconds: FAT32 keeps two, exFAT a hundredth, and not every
         // driver rounds the rest the same way.
-        "\(name.uppercased())|\(size)|\(Int(modified.timeIntervalSince1970.rounded(.down)))"
+        fingerprint = "\(name.uppercased())|\(size)|\(Int(modified.timeIntervalSince1970.rounded(.down)))"
     }
+
+    // One file is one path: the values above follow from it.
+    static func == (a: MediaFile, b: MediaFile) -> Bool {
+        a.id == b.id && a.size == b.size && a.role == b.role && a.modified == b.modified && a.created == b.created
+    }
+
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }

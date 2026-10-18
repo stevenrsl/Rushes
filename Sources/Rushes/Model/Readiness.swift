@@ -14,6 +14,8 @@ struct Readiness {
         var fileSystem: String?
         /// The path of the volume it sits on.
         var volume: String
+        /// The destination's own path, as the plan names it.
+        var path: String = ""
     }
 
     var cards: Int
@@ -47,27 +49,33 @@ struct Readiness {
         }
         if template.uses(.camera) || settings.layout.uses(.camera), cardWithoutLetter { reasons.append("Une carte n'a pas de lettre de caméra.") }
         if !template.isUnique { reasons.append("Le modèle doit contenir {NUM} ou {ORIG}, sinon deux photos auraient le même nom.") }
+        for category in plan.unrouted {
+            reasons.append("Aucun disque ne reçoit \(category.plural) : choisis-en un dans Destinations.")
+        }
         if !plan.conflicts.isEmpty { reasons.append("\(plan.conflicts.count) nom\(plan.conflicts.count > 1 ? "s" : "") déjà pris : rien ne sera remplacé.") }
         let online = drives.filter(\.isOnline)
         for drive in online {
-            let needed = plan.bytesToCopy + Self.margin(for: plan.bytesToCopy)
-            if let free = drive.available, free < needed {
+            let incoming = plan.bytes(to: drive.path)
+            let needed = incoming + Self.margin(for: incoming)
+            if incoming > 0, let free = drive.available, free < needed {
                 reasons.append("Pas assez de place sur « \(drive.name) » : il manque \(Format.bytes(needed - free)).")
             }
         }
-        if let big = plan.tooBigForFAT {
-            for drive in online where drive.fileSystem == "msdos" {
+        for drive in online where drive.fileSystem == "msdos" {
+            if let big = plan.tooBigForFAT(on: drive.path) {
                 reasons.append("« \(drive.name) » est en FAT32, qui ne peut pas recevoir « \(big.name) » (\(Format.bytes(big.file.size))) : il faut un disque en exFAT ou APFS.")
             }
         }
         // Two folders on one disk are one copy, however they are named. Saying
-        // "sur deux disques" then would be the one lie that matters.
-        var volumes: [String: String] = [:]
-        for drive in online {
-            if let first = volumes[drive.volume], first != drive.name {
-                reasons.append("« \(first) » et « \(drive.name) » sont sur le même disque : ce ne serait qu'une seule copie.")
-            } else if volumes[drive.volume] == nil {
-                volumes[drive.volume] = drive.name
+        // "sur deux disques" then would be the one lie that matters. Two
+        // folders that share no kind (the photos here, the videos there) are
+        // two places, not two copies, and are left alone.
+        var said: Set<String> = []
+        for (i, a) in online.enumerated() {
+            for b in online[(i + 1)...] where a.volume == b.volume && a.name != b.name {
+                let shared = settings.receives(a.path).intersection(settings.receives(b.path))
+                guard !shared.isEmpty, said.insert(a.volume).inserted else { continue }
+                reasons.append("« \(a.name) » et « \(b.name) » sont sur le même disque : ce ne serait qu'une seule copie.")
             }
         }
         // The copy in progress is named `.<name>.rushes-partial`, sixteen

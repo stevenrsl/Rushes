@@ -56,14 +56,14 @@ final class VolumeWatcher {
     }
 
     /// The volume a folder sits on.
-    static func volume(of url: URL) -> URL? {
+    nonisolated static func volume(of url: URL) -> URL? {
         try? url.resourceValues(forKeys: [.volumeURLKey]).volume
     }
 
     /// A card's identity as its file system gives it: the volume serial of
     /// FAT and exFAT, written at each format. Two cards swapped in a reader
     /// mount at the same path under the same name; this tells them apart.
-    static func identity(of url: URL) -> String? {
+    nonisolated static func identity(of url: URL) -> String? {
         try? url.resourceValues(forKeys: [.volumeUUIDStringKey]).volumeUUIDString
     }
 
@@ -118,8 +118,10 @@ final class VolumeWatcher {
             name = name.trimmingCharacters(in: .whitespaces)
             if name.isEmpty { name = "UNTITLED" }
             _ = try diskutil(["eraseVolume", personality, name, device])
-            // Back in the camera next: nothing else should open it now.
-            _ = try? diskutil(["eject", device])
+            // Back in the camera next: nothing else should open it now. The
+            // whole disk, so a camera plugged by USB lets go of it too.
+            let whole = (plist["ParentWholeDisk"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? device
+            if (try? diskutil(["eject", whole])) == nil { _ = try? diskutil(["eject", device]) }
         }.value
     }
 
@@ -144,11 +146,72 @@ final class VolumeWatcher {
         return String(decoding: out, as: UTF8.self)
     }
 
+    enum Ejection: Sendable {
+        /// Unmounted and ejected: the reader can be pulled.
+        case ejected
+        /// Unmounted, but the device would not eject its medium, which a
+        /// camera plugged by USB often refuses: it can be unplugged all the same.
+        case unmounted
+    }
+
     /// Unmounts and ejects, off the main thread: a card that Spotlight or
     /// Photos is still reading can take seconds to answer.
-    static func eject(_ url: URL) async throws {
+    ///
+    /// A card is ejected as the disk it is on, not as one volume: a camera
+    /// plugged by USB shows its card as one volume of a disk of its own, and
+    /// ejecting that volume alone left the body attached (reported
+    /// 2026-10-16). The whole disk goes only when every volume on it may go;
+    /// `keeping` holds the mount points that must stay (a card told "ne pas
+    /// formater", a destination). A device that will not eject is still
+    /// unmounted, and that is said rather than called a failure.
+    nonisolated static func eject(_ url: URL, keeping: Set<String> = []) async throws -> Ejection {
         try await Task.detached(priority: .userInitiated) {
-            try NSWorkspace.shared.unmountAndEjectDevice(at: url)
+            let info = try? diskutil(["info", "-plist", url.path])
+            let plist = info.flatMap { try? PropertyListSerialization.propertyList(from: Data($0.utf8), format: nil) as? [String: Any] }
+            let device = plist?["DeviceIdentifier"] as? String
+            let whole = plist?["ParentWholeDisk"] as? String
+            // A card in the Mac's own SD slot says "internal" and "removable";
+            // the Mac's own disks never get here, being no card.
+            let removable = (plist?["RemovableMedia"] as? Bool) == true || (plist?["Ejectable"] as? Bool) == true
+            if let whole, !whole.isEmpty, removable || (plist?["Internal"] as? Bool) != true {
+                let others = mountPoints(on: whole).filter { $0 != url.path }
+                if others.allSatisfy({ !keeping.contains($0) }), (try? diskutil(["eject", whole])) != nil {
+                    return .ejected
+                }
+            }
+            if !isMounted(url) { return .unmounted }
+            do {
+                try NSWorkspace.shared.unmountAndEjectDevice(at: url)
+                return .ejected
+            } catch {
+                // The medium would not eject; the volume may have gone anyway,
+                // or go with a plain unmount.
+                if !isMounted(url) { return .unmounted }
+                if let device, (try? diskutil(["unmount", device])) != nil, !isMounted(url) { return .unmounted }
+                throw error
+            }
         }.value
+    }
+
+    /// Where each volume of a whole disk is mounted.
+    nonisolated private static func mountPoints(on whole: String) -> [String] {
+        guard let list = try? diskutil(["list", "-plist", whole]),
+              let plist = try? PropertyListSerialization.propertyList(from: Data(list.utf8), format: nil) as? [String: Any],
+              let disks = plist["AllDisksAndPartitions"] as? [[String: Any]]
+        else { return [] }
+        var points: [String] = []
+        for disk in disks {
+            if let point = disk["MountPoint"] as? String { points.append(point) }
+            let parts = ((disk["Partitions"] as? [[String: Any]]) ?? []) + ((disk["APFSVolumes"] as? [[String: Any]]) ?? [])
+            for part in parts {
+                if let point = part["MountPoint"] as? String { points.append(point) }
+            }
+        }
+        return points
+    }
+
+    nonisolated private static func isMounted(_ url: URL) -> Bool {
+        let mounted = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: nil, options: []) ?? []
+        return mounted.contains { $0.standardizedFileURL.path == url.standardizedFileURL.path }
     }
 }

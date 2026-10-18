@@ -117,6 +117,12 @@ enum Verdicts {
             reasons.append("Des noms de cette carte étaient déjà pris : ces prises n'ont pas été copiées.")
         }
 
+        let unrouted = mine.filter { $0.status == .noDrive }
+        if !unrouted.isEmpty {
+            level = .hold
+            reasons.append("\(Format.count(unrouted.count, "prise")) de cette carte n'\(unrouted.count > 1 ? "ont" : "a") été reçue\(unrouted.count > 1 ? "s" : "") par aucun disque.")
+        }
+
         let leftByChoice = mine.reduce(0) { $0 + $1.leftOut.count } + scan.orphans.count
         return CardVerdict(cardID: cardID, cardName: cardName, level: level, reasons: reasons, leftByChoice: leftByChoice)
     }

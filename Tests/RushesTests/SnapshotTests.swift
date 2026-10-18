@@ -41,4 +41,18 @@ struct SnapshotTests {
             try save(AuditView(scrolls: false).environment(AuditModel(showing: .finished(intact))), "audit-intact", dark: dark)
         }
     }
+
+    @Test func speedGraph() throws {
+        var history = ThroughputHistory()
+        // Ten minutes from a card at about 280 MB/s with a dip, then the read-back.
+        for second in stride(from: 1.0, through: 900, by: 1) {
+            let verifying = second > 600
+            let base = verifying ? 420e6 : (second > 200 && second < 240 ? 60e6 : 280e6)
+            let wobble = sin(second / 9) * 18e6
+            history.add(at: second, seconds: 1, bytes: Int64(base + wobble), verifying: verifying)
+        }
+        for dark in [false, true] {
+            try save(SpeedGraph(history: history, current: 415e6).padding(.top, 40), "speed-graph", dark: dark)
+        }
+    }
 }

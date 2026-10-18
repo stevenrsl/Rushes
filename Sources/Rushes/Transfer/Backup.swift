@@ -46,6 +46,11 @@ struct BackupReport: Sendable {
     /// What was verified, by shoot folder: the manifests' entries, kept for
     /// the report written once the cards have their verdicts.
     var entries: [String: [Manifest.Entry]] = [:]
+    /// The same, by drive path then shoot folder: what each drive holds of
+    /// tonight, which is not all of it when drives receive different kinds.
+    var onDrives: [String: [String: [Manifest.Entry]]] = [:]
+    /// Bytes read from the cards plus every copy written and read back.
+    var bytesMoved: Int64 = 0
 
     var succeeded: Bool { failures.isEmpty && !cancelled && stopped == nil && unflushed.isEmpty }
 }
@@ -61,7 +66,7 @@ enum Backup {
         let groups = plan.toCopy
         var state = BackupProgress()
         state.filesTotal = groups.reduce(0) { $0 + $1.files.count }
-        state.total = plan.bytesToCopy * Int64(1 + drives.count)
+        state.total = plan.bytesMoved
         state.quiet = true
         progress(state)
 
@@ -72,7 +77,11 @@ enum Backup {
         // line, the journal says so by itself, and the next run trusts what it
         // verified rather than copying the card again.
         let id = UUID().uuidString
-        let start = JournalLine(kind: .start, backup: id, at: Date(), version: Bundle.main.version, pattern: plan.namePattern)
+        var start = JournalLine(kind: .start, backup: id, at: Date(), version: Bundle.main.version, pattern: plan.namePattern)
+        start.client = plan.client
+        start.project = plan.project
+        start.initials = plan.initials
+        start.days = plan.days
         for drive in drives {
             do {
                 try Journal.append([start], on: drive)
@@ -82,6 +91,7 @@ enum Backup {
         }
 
         var entries: [String: [Manifest.Entry]] = [:]
+        var onDrives: [String: [String: [Manifest.Entry]]] = [:]
         var lastReport = Date.distantPast
 
         func publish(force: Bool = false) {
@@ -94,6 +104,9 @@ enum Backup {
 
         outer: for group in groups {
             var groupOK = true
+            // The drives this shot goes to: all of them, or those that receive
+            // its kind. A copy is named on each of these or on none.
+            let mine = drives.filter { group.drives.contains($0.path) }
             for planned in group.files {
                 if isCancelled() {
                     report.cancelled = true
@@ -102,7 +115,7 @@ enum Backup {
                 state.current = planned.name
                 state.verifying = false
                 publish(force: true)
-                let targets = drives.map { $0.appendingPathComponent(planned.relativePath) }
+                let targets = mine.map { $0.appendingPathComponent(planned.relativePath) }
                 let before = state.done
                 do {
                     let hash = try Copier.copy(
@@ -120,10 +133,11 @@ enum Backup {
                     }
                     report.filesCopied += 1
                     report.bytesCopied += planned.file.size
+                    report.bytesMoved += planned.file.size * Int64(1 + mine.count)
                     let inShoot = group.shootFolder.isEmpty
                         ? planned.relativePath
                         : String(planned.relativePath.dropFirst(group.shootFolder.count + 1))
-                    entries[group.shootFolder, default: []].append(Manifest.Entry(
+                    let entry = Manifest.Entry(
                         original: planned.file.relativePath,
                         volume: group.volumeName,
                         path: inShoot,
@@ -131,7 +145,9 @@ enum Backup {
                         xxh64: hash,
                         fingerprint: planned.file.fingerprint,
                         captured: group.group.captureDate
-                    ))
+                    )
+                    entries[group.shootFolder, default: []].append(entry)
+                    for drive in mine { onDrives[drive.path, default: [:]][group.shootFolder, default: []].append(entry) }
                     // Written now, not at the end: this line is what a backup
                     // that never ends leaves behind.
                     let line = JournalLine(
@@ -141,7 +157,7 @@ enum Backup {
                         original: planned.file.relativePath, volume: group.volumeName,
                         category: group.group.category.rawValue
                     )
-                    for drive in drives {
+                    for drive in mine {
                         do {
                             try Journal.append([line], on: drive)
                         } catch {
@@ -155,7 +171,7 @@ enum Backup {
                     groupOK = false
                     // What this file had counted goes; what it should have counted
                     // is added back so the bar still ends at the end.
-                    state.done = before + planned.file.size * Int64(1 + drives.count)
+                    state.done = before + planned.file.size * Int64(1 + mine.count)
                     let failure = error as? Copier.Failure
                     report.failures.append(.init(file: planned.file.relativePath, message: error.localizedDescription, source: group.sourceID))
                     if failure?.fatal == true {
@@ -176,8 +192,10 @@ enum Backup {
         publish(force: true)
         let now = Date()
         report.recorded = now
+        // Each drive's records list what that drive holds, and nothing it
+        // does not: the audit reads them back against the drive.
         for drive in drives {
-            for (folder, list) in entries {
+            for (folder, list) in onDrives[drive.path] ?? [:] {
                 let shoot = folder.isEmpty ? drive : drive.appendingPathComponent(folder)
                 do {
                     try History.write(list, in: shoot, at: now)
@@ -214,8 +232,11 @@ enum Backup {
         for drive in drives { try? Journal.append([end], on: drive) }
 
         report.entries = entries
-        if let drive = drives.first {
-            report.folders = plan.shootFolders.map { $0.isEmpty ? drive : drive.appendingPathComponent($0) }
+        report.onDrives = onDrives
+        // One folder per shoot, on the first drive that received some of it.
+        for folder in plan.shootFolders {
+            guard let drive = drives.first(where: { onDrives[$0.path]?[folder] != nil }) ?? drives.first else { continue }
+            report.folders.append(folder.isEmpty ? drive : drive.appendingPathComponent(folder))
         }
         report.finished = Date()
         publish(force: true)

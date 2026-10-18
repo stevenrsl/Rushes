@@ -89,18 +89,42 @@ struct CardScan: Sendable {
     /// database is not a shot), never passed over either.
     var setAside: [UnknownFile] = []
 
+    // Counted once when the card is read, not at every redraw of its row:
+    // a card of ten thousand shots is drawn again at every keystroke.
+    let photoCount: Int
+    let videoCount: Int
+    let audioCount: Int
+    let totalSize: Int64
+    let firstDate: Date?
+    let lastDate: Date?
+
+    init(
+        root: URL, groups: [MediaGroup], orphans: [MediaFile], unknown: [UnknownFile],
+        unreadableFolders: [String], brand: CameraBrand, camera: CameraIdentity? = nil, setAside: [UnknownFile] = []
+    ) {
+        self.root = root
+        self.groups = groups
+        self.orphans = orphans
+        self.unknown = unknown
+        self.unreadableFolders = unreadableFolders
+        self.brand = brand
+        self.camera = camera
+        self.setAside = setAside
+        var counts: [MediaCategory: Int] = [:]
+        for group in groups { counts[group.category, default: 0] += 1 }
+        photoCount = counts[.photo] ?? 0
+        videoCount = counts[.video] ?? 0
+        audioCount = counts[.audio] ?? 0
+        totalSize = groups.reduce(0) { $0 + $1.totalSize }
+        firstDate = groups.map(\.captureDate).min()
+        lastDate = groups.map(\.captureDate).max()
+    }
+
     var cameraName: String { camera?.name ?? brand.rawValue }
     var unknownCount: Int { unknown.count }
     /// Everything of this card is accounted for: copied, listed, or left on
     /// purpose. Nothing was passed over in silence.
     var isComplete: Bool { unreadableFolders.isEmpty }
-
-    var photoCount: Int { groups.filter { $0.category == .photo }.count }
-    var videoCount: Int { groups.filter { $0.category == .video }.count }
-    var audioCount: Int { groups.filter { $0.category == .audio }.count }
-    var totalSize: Int64 { groups.reduce(0) { $0 + $1.totalSize } }
-    var firstDate: Date? { groups.map(\.captureDate).min() }
-    var lastDate: Date? { groups.map(\.captureDate).max() }
 }
 
 enum CardScanner {
