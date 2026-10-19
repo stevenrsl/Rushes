@@ -24,7 +24,7 @@
 set -euo pipefail
 
 # Written by Tools/make-signing-certificate.sh; build.sh signs with it.
-CERT_SHA1="PENDING"
+CERT_SHA1="7ad9ccc9e8634244b217ea10028554dce5a56bf3"
 BUNDLE_ID="eu.stevenrsl.rushes"
 REPO="stevenrsl/Rushes"
 
