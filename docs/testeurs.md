@@ -19,16 +19,31 @@ avant sa sortie publique.
 
 ## Installer
 
+Le plus simple : ouvre le Terminal (dans Applications › Utilitaires), colle cette ligne et
+appuie sur Entrée.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stevenrsl/Rushes/main/install.sh | bash
+```
+
+Elle installe la dernière version dans Applications, après avoir vérifié que le fichier est
+entier et signé par le certificat de Rushes. Elle n'installe rien sinon, et dit pourquoi. Pour
+mettre à jour, relance la même ligne. Ouvre ensuite Rushes depuis Applications.
+
+Sans le Terminal :
+
 1. Télécharge le dernier `Rushes-<version>.dmg` sur la page des
    [versions](https://github.com/stevenrsl/Rushes/releases). Pendant la bêta, ce sont des
    pré-versions.
 2. Ouvre-le et glisse Rushes sur le raccourci Applications.
-3. Ouvre Rushes depuis Applications. **Pour l'instant, l'app n'est pas signée par Apple**, et
-   macOS la bloque : clique sur OK, va dans Réglages Système › Confidentialité et sécurité, et
-   en bas, à côté de « Rushes a été bloquée », clique sur **Ouvrir quand même**. C'est à refaire
-   à chaque nouvelle version.
-4. Au premier lancement, macOS demande aussi l'accès aux volumes
-   amovibles : accepte, sinon les cartes n'apparaissent pas.
+3. Ouvre Rushes depuis Applications. **Pour l'instant, l'app n'est pas notarisée par Apple**,
+   et macOS la bloque : clique sur OK, va dans Réglages Système › Confidentialité et sécurité,
+   et en bas, à côté de « Rushes a été bloquée », clique sur **Ouvrir quand même**. Le bouton
+   ne reste qu'une heure environ ; rouvre Rushes s'il a disparu. C'est à refaire à chaque
+   nouvelle version téléchargée ainsi.
+
+Dans les deux cas, au premier lancement, macOS demande l'accès aux volumes amovibles :
+accepte, sinon les cartes n'apparaissent pas. Les versions suivantes ne le redemandent pas.
 
 Il faut un Mac sous macOS 26 ou plus récent. Pour savoir si une nouvelle version est sortie :
 Rushes › Rechercher une mise à jour…. Rushes ne se connecte à Internet qu'à ce moment-là.

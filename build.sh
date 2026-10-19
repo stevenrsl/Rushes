@@ -6,6 +6,10 @@
 #   ./build.sh debug            the same, unoptimised
 #   ./build.sh release-signed   Developer ID, hardened runtime, notarised,
 #                               packed in build/Rushes-<version>.dmg
+#   ./build.sh release-selfsigned
+#                               the same .dmg signed with the self-signed
+#                               certificate "Rushes", not notarised: what the
+#                               beta ships until there is a Developer ID
 #
 # Release by default, unlike Cairn: the checksum runs over every byte of every
 # card, and a debug build hashes ten times slower than an optimised one.
@@ -16,7 +20,16 @@
 #   RUSHES_NOTARY_PROFILE  a keychain profile made once with
 #                          `xcrun notarytool store-credentials <profile>`
 # RUSHES_SIGN_IDENTITY=- signs ad hoc and skips notarisation, to try the
-# packaging before the account exists. That .dmg is refused on any other Mac.
+# packaging. Gatekeeper blocks that .dmg on another Mac until "Ouvrir quand
+# même", and the volumes permission is asked again at every version.
+#
+# release-selfsigned signs with the certificate Tools/make-signing-certificate.sh
+# made, found by the SHA-1 install.sh pins (RUSHES_KEYCHAIN for another keychain
+# than the default list). Gatekeeper still blocks a browser's download, but
+# the signature is the same from one version to the next, so the volumes
+# permission holds, and install.sh, whose download carries no quarantine,
+# installs it without a block once it has checked the hash and the signature.
+# Every .dmg gets a .sha256 beside it, for the release page.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -24,7 +37,8 @@ MODE="${1:-release}"
 case "$MODE" in
   release|debug) CONFIG="$MODE"; SIGNED=0 ;;
   release-signed) CONFIG=release; SIGNED=1 ;;
-  *) echo "usage: ./build.sh [release|debug|release-signed]" >&2; exit 2 ;;
+  release-selfsigned) CONFIG=release; SIGNED=2 ;;
+  *) echo "usage: ./build.sh [release|debug|release-signed|release-selfsigned]" >&2; exit 2 ;;
 esac
 
 # The version lives in Support/Info.plist and nowhere else: the About window
@@ -52,6 +66,27 @@ if [ "$SIGNED" = 1 ]; then
       exit 1
     fi
   fi
+elif [ "$SIGNED" = 2 ]; then
+  # By its hash, never by its name: the name "Rushes" proves nothing, and the
+  # hash is what every tester's Mac has recorded.
+  IDENTITY="$(sed -n 's/^CERT_SHA1="\([0-9a-f]\{40\}\)"$/\1/p' install.sh | tr 'a-f' 'A-F')"
+  if [ -z "$IDENTITY" ]; then
+    echo "install.sh pins no certificate yet: run Tools/make-signing-certificate.sh first." >&2
+    exit 1
+  fi
+  KEYCHAIN_ARGS=()
+  if [ -n "${RUSHES_KEYCHAIN:-}" ]; then KEYCHAIN_ARGS=(--keychain "$RUSHES_KEYCHAIN"); fi
+  # Without -v: a self-signed certificate is "not trusted", and codesign signs
+  # with it all the same.
+  if ! security find-identity -p codesigning ${RUSHES_KEYCHAIN:+"$RUSHES_KEYCHAIN"} | grep -qF " $IDENTITY \""; then
+    echo "The certificate install.sh pins ($IDENTITY) is not in the keychain." >&2
+    echo "Import the .p12 kept when it was made, rather than making another." >&2
+    exit 1
+  fi
+  # The app is held to its identifier as well; the image's identifier is its
+  # file name, so it is held to the certificate alone.
+  IMAGE_REQUIREMENT="certificate leaf = H\"$(echo "$IDENTITY" | tr 'A-F' 'a-f')\""
+  REQUIREMENT="identifier \"$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Support/Info.plist)\" and $IMAGE_REQUIREMENT"
 fi
 
 # The build products live outside Documents: the folder is synced, its file
@@ -110,6 +145,10 @@ if [ "$SIGNED" = 0 ]; then
   # Ad-hoc signature: enough to run here. macOS keys the removable volumes
   # permission to it, so a rebuild asks again.
   codesign --force --sign - "$STAGE"
+elif [ "$SIGNED" = 2 ]; then
+  # No --timestamp: Apple's server stamps only its own certificates.
+  codesign --force --options runtime ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} --sign "$IDENTITY" "$STAGE"
+  codesign --verify --strict -R="$REQUIREMENT" "$STAGE"
 elif [ "$IDENTITY" = "-" ]; then
   codesign --force --options runtime --sign - "$STAGE"
 else
@@ -143,7 +182,9 @@ mkdir -p "$DMG_STAGE"
 ditto --noextattr --norsrc "$STAGE" "$DMG_STAGE/Rushes.app"
 ln -s /Applications "$DMG_STAGE/Applications"
 hdiutil create -quiet -volname "Rushes $VERSION" -srcfolder "$DMG_STAGE" -fs HFS+ -format UDZO -ov "$DMG"
-if [ "$IDENTITY" = "-" ]; then
+if [ "$SIGNED" = 2 ]; then
+  codesign --force ${KEYCHAIN_ARGS[@]+"${KEYCHAIN_ARGS[@]}"} --sign "$IDENTITY" "$DMG"
+elif [ "$IDENTITY" = "-" ]; then
   codesign --force --sign - "$DMG"
 else
   codesign --force --timestamp --sign "$IDENTITY" "$DMG"
@@ -159,8 +200,13 @@ MOUNT="$(hdiutil attach -nobrowse -readonly -mountrandom "$CHECK" "$DMG" | awk -
 ditto "$MOUNT/Rushes.app" "$CHECK/Rushes.app"
 hdiutil detach -quiet "$MOUNT"
 xattr -w com.apple.quarantine "0081;$(printf '%x' "$(date +%s)");Safari;" "$CHECK/Rushes.app"
-if [ "$IDENTITY" = "-" ]; then
-  echo "Signed ad hoc: Gatekeeper will refuse this .dmg on another Mac. Packaging only." >&2
+if [ "$SIGNED" = 2 ]; then
+  # What install.sh will check on the tester's Mac, image and app.
+  codesign --verify --strict -R="$IMAGE_REQUIREMENT" "$DMG"
+  codesign --verify --strict -R="$REQUIREMENT" "$CHECK/Rushes.app"
+  echo "Self-signed: Gatekeeper blocks a browser's download until \"Ouvrir quand même\"; install.sh does not." >&2
+elif [ "$IDENTITY" = "-" ]; then
+  echo "Signed ad hoc: Gatekeeper blocks this .dmg on another Mac until \"Ouvrir quand même\"." >&2
 else
   spctl --assess --type open --context context:primary-signature -vv "$DMG"
   spctl --assess --type execute -vv "$CHECK/Rushes.app"
@@ -168,4 +214,7 @@ fi
 rm -rf "$CHECK"
 
 cp "$DMG" "build/$DMG_NAME"
+# Beside the .dmg on the release page, in the form `shasum -c` reads.
+(cd build && shasum -a 256 "$DMG_NAME" > "$DMG_NAME.sha256")
 echo "$(pwd)/build/$DMG_NAME"
+echo "$(pwd)/build/$DMG_NAME.sha256"

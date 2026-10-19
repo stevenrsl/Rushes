@@ -25,22 +25,40 @@ L'app est en français. Le code et sa documentation sont en anglais.
 
 ## Télécharger
 
-Rushes se télécharge sur la page des [versions](https://github.com/stevenrsl/Rushes/releases).
-Il faut un Mac sous **macOS 26 ou plus récent**. Ouvre le fichier `Rushes-<version>.dmg`, glisse
-Rushes sur le raccourci Applications, puis ouvre-la depuis Applications.
+Il faut un Mac sous **macOS 26 ou plus récent**. Pendant la bêta, l'app est signée par son
+auteur mais pas encore par Apple : macOS ne la connaît pas, et la bloque quand elle vient d'un
+navigateur. Il y a deux façons de l'installer.
 
-**Pendant la bêta, l'app n'est pas encore signée par Apple**, et macOS la bloque au premier
-lancement. Clique sur OK, va dans Réglages Système › Confidentialité et sécurité, et en bas, à
-côté de « Rushes a été bloquée », clique sur **Ouvrir quand même**. C'est à refaire à chaque
-nouvelle version, jusqu'à ce que l'app soit signée et notarisée.
+**Par le Terminal, en une ligne.** C'est la plus simple, et c'est aussi celle des mises à jour :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stevenrsl/Rushes/main/install.sh | bash
+```
+
+Le script prend la dernière version sur la page des
+[versions](https://github.com/stevenrsl/Rushes/releases). Il vérifie que le fichier a bien
+l'empreinte SHA-256 publiée à côté de lui et qu'il est signé par le certificat de Rushes, puis
+il copie l'app dans Applications. S'il manque quoi que ce soit, il n'installe rien et dit
+pourquoi. Il ne demande aucun mot de passe et ne touche pas à Rushes si elle est ouverte. Une
+app installée ainsi n'est pas bloquée par macOS, puisque c'est le script qui a fait les
+vérifications. Il est court : [lis-le](install.sh) avant de le lancer si tu veux.
+
+**Par le navigateur.** Télécharge `Rushes-<version>.dmg` sur la page des versions, ouvre-le,
+glisse Rushes sur le raccourci Applications, puis ouvre-la depuis Applications. macOS la
+bloque : clique sur OK, va dans Réglages Système › Confidentialité et sécurité, et en bas, à
+côté de « Rushes a été bloquée », clique sur **Ouvrir quand même**. Le bouton ne reste là
+qu'une heure environ ; s'il a disparu, rouvre Rushes pour le faire revenir. C'est à refaire à
+chaque nouvelle version téléchargée ainsi, jusqu'à ce que l'app soit notarisée par Apple.
 
 **Au premier lancement, macOS demande l'accès aux volumes amovibles.** Il faut accepter, sinon
-les cartes n'apparaissent pas du tout, ou apparaissent vides.
+les cartes n'apparaissent pas du tout, ou apparaissent vides. Les versions suivantes portent la
+même signature, donc la question n'est plus posée. Elle revient une seule fois, à la première
+version signée de cette façon, pour qui avait une version plus ancienne.
 
 Pour savoir si une nouvelle version existe : Rushes › Rechercher une mise à jour…. C'est le seul
 moment où l'app se connecte à Internet, et seulement quand tu le demandes, avec l'envoi vers un
-serveur si tu en règles un (Réglages › Envoi). Pour mettre à jour,
-télécharge la nouvelle version et remplace l'ancienne dans Applications. Les réglages sont
+serveur si tu en règles un (Réglages › Envoi). Pour mettre à jour, relance la commande du
+Terminal, ou télécharge la nouvelle version et remplace l'ancienne dans Applications. Les réglages sont
 conservés d'une version à l'autre. Quand un réglage change de sens entre deux versions, l'app met
 à jour ce qui est enregistré, une seule fois, au lancement suivant.
 
@@ -172,6 +190,15 @@ et `codesign` les refuse. `build.sh` s'en occupe tout seul.
 Une version à distribuer se fait avec `./build.sh release-signed` : signature Developer ID,
 notarisation par Apple, et un `.dmg` dans `build/`. Le haut de `build.sh` dit quelles variables
 d'environnement il attend ; aucun identifiant n'est dans le repo.
+
+Tant qu'il n'y a pas de compte Developer ID, les versions de la bêta se font avec
+`./build.sh release-selfsigned` : même `.dmg`, signé par un certificat auto-signé « Rushes »
+au lieu d'Apple, sans notarisation, avec son `.sha256` à côté. Le certificat se fait une seule
+fois avec `Tools/make-signing-certificate.sh <sauvegarde.p12>`, qui le range dans le trousseau,
+garde une copie de la clé hors du repo et inscrit son empreinte dans `install.sh`. Ce sont les
+deux fichiers à publier sur chaque version. Il faut garder ce certificat d'une version à
+l'autre : c'est lui qui fait que macOS se souvient de l'accès aux volumes, et lui que
+`install.sh` attend.
 
 `CLAUDE.md` décrit le fonctionnement en détail : le regroupement des prises par la norme DCF,
 les modèles de noms, les lettres de caméra, ce que fait le moteur de copie, et les décisions

@@ -15,6 +15,8 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ./build.sh                                          # release build → build/Rushes.app
 ./build.sh debug
 ./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
+./build.sh release-selfsigned                       # the beta's .dmg: self-signed "Rushes", not notarised
+Tools/make-signing-certificate.sh ~/backup.p12      # that certificate, made once; pins it in install.sh
 swift test --scratch-path /tmp/rushes-build         # 135 tests; benches and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
@@ -180,7 +182,7 @@ Sources/Rushes/
 Tests/        Swift Testing: hash, grouping per brand, naming, planner, backup, copier edges,
               scanner, journal, verdicts, readiness, report, audit, ASC MHL, file systems
               (hdiutil exFAT/FAT32 images), camera letters, settings, upload
-Tools/        make-icon.swift, make-test-card.swift
+Tools/        make-icon.swift, make-test-card.swift, make-signing-certificate.sh
 docs/         the council's notes (French), relecture.md (the guide for an outside review of the core)
 ```
 
@@ -406,8 +408,25 @@ lives in `Support/Info.plist` only: `CFBundleShortVersionString` in digits (macO
 `RushesPrerelease` for the rest (`beta.1`, empty once public), joined by `Bundle.version` as
 the release is tagged (`v0.3.0-beta.1`, decided 2026-10-01).
 
+**Until there is a Developer ID** (decided 2026-10-19), the beta ships from `build.sh
+release-selfsigned`: the same `.dmg`, hardened runtime, signed with a self-signed certificate
+"Rushes" made once by `Tools/make-signing-certificate.sh` (key in the login keychain and a
+`.p12` kept outside the repo), not notarised, with a `.sha256` beside it; both go on the
+release. It buys two things an ad-hoc signature does not. The designated requirement is
+`identifier "eu.stevenrsl.rushes" and certificate leaf = H"…"`, the same at every version, so
+the removable volumes permission holds across updates (ad hoc, it is keyed to the cdhash and
+asked again every time). And `install.sh`, run as `curl … | bash`, installs without Gatekeeper's
+block, since curl sets no quarantine: it picks the newest release as `UpdateCheck` does, checks
+the SHA-256, then holds the image to the certificate pinned in its `CERT_SHA1` and the app to
+the bundle identifier as well, copies beside `/Applications/Rushes.app`, checks again, and
+swaps. It refuses while Rushes runs, never asks for a password and never removes a quarantine
+flag. `build.sh` signs by the hash `install.sh` pins, never by the name, so the two cannot
+drift; making a second certificate would cost every tester the permission once. A browser's
+download is still blocked until "Ouvrir quand même", at every version. When the Developer ID
+comes, `release-signed` replaces it and `install.sh` pins the new leaf or goes.
+
 The first launch asks for removable volumes access (`NSRemovableVolumesUsageDescription`); the
-ad-hoc signature means every rebuild asks again, as Cairn's microphone does.
+ad-hoc signature of a local build means every rebuild asks again, as Cairn's microphone does.
 
 ## The beta
 

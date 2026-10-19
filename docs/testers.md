@@ -36,15 +36,31 @@ An English version will come. Until then, the words that matter:
 
 ## Installing
 
+The easiest way: open Terminal (in Applications › Utilities), paste this line and press
+Return.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/stevenrsl/Rushes/main/install.sh | bash
+```
+
+It installs the latest version in Applications, after checking that the file is whole and
+signed by Rushes's certificate. Otherwise it installs nothing and says why. To update, run the
+same line again. Then open Rushes from Applications.
+
+Without Terminal:
+
 1. Download the latest `Rushes-<version>.dmg` from the
    [releases page](https://github.com/stevenrsl/Rushes/releases). During the beta they are
    pre-releases.
 2. Open it and drag Rushes onto the Applications shortcut.
-3. Open Rushes from Applications. **For now the app is not signed by Apple**, and macOS blocks
-   it: click OK, go to System Settings › Privacy & Security, and at the bottom, next to "Rushes
-   was blocked", click **Open Anyway**. You will need to do this again for each new version.
-4. On first launch macOS also asks for access to removable volumes:
-   allow it, or the cards will not show up.
+3. Open Rushes from Applications. **For now the app is not notarised by Apple**, and macOS
+   blocks it: click OK, go to System Settings › Privacy & Security, and at the bottom, next to
+   "Rushes was blocked", click **Open Anyway**. The button only stays for about an hour; open
+   Rushes again if it is gone. You will need to do this again for each version downloaded
+   this way.
+
+Either way, on first launch macOS asks for access to removable volumes: allow it, or the cards
+will not show up. Later versions do not ask again.
 
 You need a Mac running macOS 26 or later. To find out whether a new version is out: Rushes ›
 Rechercher une mise à jour…. That is the only time Rushes connects to the Internet.
