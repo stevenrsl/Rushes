@@ -92,18 +92,66 @@ enum Backup {
 
         var entries: [String: [Manifest.Entry]] = [:]
         var onDrives: [String: [String: [Manifest.Entry]]] = [:]
-        var lastReport = Date.distantPast
+        let tally = Tally(state, progress: progress)
+        let buffers = Copier.Buffers()
+        let verifier = DispatchQueue(label: "eu.stevenrsl.rushes.verify", qos: .userInitiated)
+        // Files settled without a failure, by group: a group counts as copied
+        // once all of its files are.
+        var settledOK = Array(repeating: 0, count: groups.count)
 
-        func publish(force: Bool = false) {
-            let now = Date()
-            if force || now.timeIntervalSince(lastReport) > 0.1 {
-                lastReport = now
-                progress(state)
+        /// What one file's end means for the report. Returns false when the
+        /// backup must stop.
+        func settle(_ job: Job, _ outcome: Result<String, Error>) -> Bool {
+            let planned = job.planned, group = job.group
+            switch outcome {
+            case .success(let hash):
+                report.filesCopied += 1
+                report.bytesCopied += planned.file.size
+                report.bytesMoved += job.expected
+                settledOK[job.index] += 1
+                let inShoot = group.shootFolder.isEmpty
+                    ? planned.relativePath
+                    : String(planned.relativePath.dropFirst(group.shootFolder.count + 1))
+                let entry = Manifest.Entry(
+                    original: planned.file.relativePath,
+                    volume: group.volumeName,
+                    path: inShoot,
+                    size: planned.file.size,
+                    xxh64: hash,
+                    fingerprint: planned.file.fingerprint,
+                    captured: group.group.captureDate
+                )
+                entries[group.shootFolder, default: []].append(entry)
+                for drive in job.mine { onDrives[drive.path, default: [:]][group.shootFolder, default: []].append(entry) }
+                report.failures += job.journalFailures
+            case .failure(is CancellationError):
+                report.cancelled = true
+                return false
+            case .failure(let error):
+                // What this file had counted goes; what it should have counted
+                // is added back so the bar still ends at the end.
+                tally.makeUp(job)
+                report.failures.append(.init(file: planned.file.relativePath, message: error.localizedDescription, source: group.sourceID))
+                if (error as? Copier.Failure)?.fatal == true {
+                    report.stopped = error.localizedDescription
+                    tally.fileDone()
+                    return false
+                }
             }
+            tally.fileDone()
+            return true
         }
 
-        outer: for group in groups {
-            var groupOK = true
+        var inFlight: (job: Job, done: DispatchGroup)?
+        /// Waits for the file being read back and settles it.
+        func land() -> Bool {
+            guard let (job, done) = inFlight else { return true }
+            inFlight = nil
+            done.wait()
+            return settle(job, job.outcome!)
+        }
+
+        outer: for (index, group) in groups.enumerated() {
             // The drives this shot goes to: all of them, or those that receive
             // its kind. A copy is named on each of these or on none.
             let mine = drives.filter { group.drives.contains($0.path) }
@@ -112,84 +160,73 @@ enum Backup {
                     report.cancelled = true
                     break outer
                 }
-                state.current = planned.name
-                state.verifying = false
-                publish(force: true)
+                let job = Job(planned: planned, group: group, index: index, mine: mine)
+                tally.begin(planned.name)
                 let targets = mine.map { $0.appendingPathComponent(planned.relativePath) }
-                let before = state.done
-                do {
-                    let hash = try Copier.copy(
+                let written = Result {
+                    try Copier.write(
                         planned.file.url,
                         to: targets,
                         size: planned.file.size,
                         modified: planned.file.modified,
                         created: planned.file.created,
+                        buffers: buffers,
                         isCancelled: isCancelled
-                    ) { bytes, verifying in
-                        state.done += bytes
-                        if !verifying { state.read += bytes }
-                        state.verifying = verifying
-                        publish()
-                    }
-                    report.filesCopied += 1
-                    report.bytesCopied += planned.file.size
-                    report.bytesMoved += planned.file.size * Int64(1 + mine.count)
-                    let inShoot = group.shootFolder.isEmpty
-                        ? planned.relativePath
-                        : String(planned.relativePath.dropFirst(group.shootFolder.count + 1))
-                    let entry = Manifest.Entry(
-                        original: planned.file.relativePath,
-                        volume: group.volumeName,
-                        path: inShoot,
-                        size: planned.file.size,
-                        xxh64: hash,
-                        fingerprint: planned.file.fingerprint,
-                        captured: group.group.captureDate
-                    )
-                    entries[group.shootFolder, default: []].append(entry)
-                    for drive in mine { onDrives[drive.path, default: [:]][group.shootFolder, default: []].append(entry) }
-                    // Written now, not at the end: this line is what a backup
-                    // that never ends leaves behind.
-                    let line = JournalLine(
-                        kind: .file, backup: id, at: Date(),
-                        path: planned.relativePath, shoot: group.shootFolder,
-                        fingerprint: planned.file.fingerprint, xxh64: hash, size: planned.file.size,
-                        original: planned.file.relativePath, volume: group.volumeName,
-                        category: group.group.category.rawValue
-                    )
-                    for drive in mine {
-                        do {
-                            try Journal.append([line], on: drive)
-                        } catch {
-                            report.failures.append(.init(file: Journal.fileName, message: error.localizedDescription))
-                        }
-                    }
-                } catch is CancellationError {
-                    report.cancelled = true
-                    break outer
-                } catch {
-                    groupOK = false
-                    // What this file had counted goes; what it should have counted
-                    // is added back so the bar still ends at the end.
-                    state.done = before + planned.file.size * Int64(1 + mine.count)
-                    let failure = error as? Copier.Failure
-                    report.failures.append(.init(file: planned.file.relativePath, message: error.localizedDescription, source: group.sourceID))
-                    if failure?.fatal == true {
-                        report.stopped = error.localizedDescription
+                    ) { tally.add($0, for: job, verifying: false) }
+                }
+                tally.written()
+
+                // The file before this one, read back while this one was read
+                // from the card.
+                let carryOn = land()
+                switch written {
+                case .success(let written):
+                    guard carryOn else {
+                        Copier.discard(written)
                         break outer
                     }
+                    let done = DispatchGroup()
+                    inFlight = (job, done)
+                    verifier.async(group: done) {
+                        job.outcome = Result {
+                            try Copier.verify(written, buffers: buffers, isCancelled: isCancelled) {
+                                tally.add($0, for: job, verifying: true)
+                            }
+                        }
+                        guard case .success(let hash) = job.outcome else { return }
+                        // Written now, not at the end: this line is what a
+                        // backup that never ends leaves behind.
+                        let line = JournalLine(
+                            kind: .file, backup: id, at: Date(),
+                            path: planned.relativePath, shoot: group.shootFolder,
+                            fingerprint: planned.file.fingerprint, xxh64: hash, size: planned.file.size,
+                            original: planned.file.relativePath, volume: group.volumeName,
+                            category: group.group.category.rawValue
+                        )
+                        for drive in mine {
+                            do {
+                                try Journal.append([line], on: drive)
+                            } catch {
+                                job.journalFailures.append(.init(file: Journal.fileName, message: error.localizedDescription))
+                            }
+                        }
+                    }
+                case .failure(let error):
+                    guard carryOn, settle(job, .failure(error)) else { break outer }
                 }
-                state.filesDone += 1
-                publish(force: true)
             }
-            if groupOK { report.groupsCopied += 1 }
         }
+        // The last file, or the one still being read back when the backup
+        // stopped: what it verified counts.
+        _ = land()
+        report.groupsCopied = zip(groups, settledOK).filter { $1 == $0.files.count }.count
+        state = tally.state
 
         // Whatever happened, what was copied and checked is written down, so
         // the next attempt skips it.
         state.quiet = true
         state.current = ""
-        publish(force: true)
+        progress(state)
         let now = Date()
         report.recorded = now
         // Each drive's records list what that drive holds, and nothing it
@@ -239,8 +276,84 @@ enum Backup {
             report.folders.append(folder.isEmpty ? drive : drive.appendingPathComponent(folder))
         }
         report.finished = Date()
-        publish(force: true)
+        progress(state)
         return report
+    }
+
+    /// One file on its way: written by this loop, then read back, named
+    /// and journaled on `verifier` while the card is read for the next.
+    private final class Job: @unchecked Sendable {
+        let planned: PlannedFile
+        let group: PlannedGroup
+        let index: Int
+        let mine: [URL]
+        /// Bytes this file has added to the bar, so a failure can make up
+        /// the difference.
+        var counted: Int64 = 0
+        var outcome: Result<String, Error>?
+        var journalFailures: [BackupReport.Failure] = []
+        init(planned: PlannedFile, group: PlannedGroup, index: Int, mine: [URL]) {
+            self.planned = planned
+            self.group = group
+            self.index = index
+            self.mine = mine
+        }
+        var expected: Int64 { planned.file.size * Int64(1 + mine.count) }
+    }
+
+    /// The bar, fed by the card's reads on one thread and the drives' on
+    /// another, and handed on at most ten times a second.
+    private final class Tally: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: BackupProgress
+        private var writing = false
+        private var lastReport = Date.distantPast
+        private let progress: @Sendable (BackupProgress) -> Void
+
+        init(_ state: BackupProgress, progress: @escaping @Sendable (BackupProgress) -> Void) {
+            stored = state
+            self.progress = progress
+        }
+
+        var state: BackupProgress { lock.withLock { stored } }
+
+        func begin(_ name: String) {
+            update(force: true) {
+                $0.current = name
+                $0.verifying = false
+                writing = true
+            }
+        }
+
+        func written() { lock.withLock { writing = false } }
+
+        /// "Vérification des copies" only while the card is not being read:
+        /// the card is what the night waits for.
+        func add(_ bytes: Int64, for job: Job, verifying: Bool) {
+            update {
+                $0.done += bytes
+                if !verifying { $0.read += bytes }
+                $0.verifying = verifying && !writing
+                job.counted += bytes
+            }
+        }
+
+        func makeUp(_ job: Job) {
+            update { $0.done += job.expected - job.counted }
+        }
+
+        func fileDone() { update(force: true) { $0.filesDone += 1 } }
+
+        private func update(force: Bool = false, _ change: (inout BackupProgress) -> Void) {
+            let snapshot: BackupProgress? = lock.withLock {
+                change(&stored)
+                let now = Date()
+                guard force || now.timeIntervalSince(lastReport) > 0.1 else { return nil }
+                lastReport = now
+                return stored
+            }
+            if let snapshot { progress(snapshot) }
+        }
     }
 
     /// Copies in progress left by a backup that was cut off. They never look

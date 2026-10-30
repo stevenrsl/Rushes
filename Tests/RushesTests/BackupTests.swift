@@ -162,6 +162,74 @@ struct BackupTests {
         #expect(left.isEmpty)
     }
 
+    /// The card reads file N+1 while file N is read back: whatever stops
+    /// the backup, nothing finished may lie outside the journal, and nothing
+    /// half-done may be left at all.
+    private func photoCard(_ box: Sandbox, shots: Int) throws -> (URL, IngestPlan, [URL]) {
+        let card = try box.folder("CARD")
+        let drives = [try box.folder("SSD-A"), try box.folder("SSD-B")]
+        let t = local(2026, 9, 21, 22, 0)
+        for n in 1...shots {
+            try box.write(String(format: "DCIM/100MSDCF/DSC%05d.ARW", n), in: card, size: 3_000_000 + n, date: t.addingTimeInterval(Double(n)))
+        }
+        var settings = IngestSettings()
+        settings.client = "Kaffi"
+        settings.project = "Lexus"
+        let scan = try CardScanner.scan(card)
+        let sources = [PlanSource(id: card.path, volumeName: "CARD", cameraLabel: "A", groups: scan.groups)]
+        return (card, Planner.plan(sources: sources, settings: settings, fixedDay: nil, drives: drives), drives)
+    }
+
+    /// Every file on a drive, from its root, outside the records.
+    private func files(on drive: URL) -> [String] {
+        let root = drive.resolvingSymlinksInPath()
+        let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey])
+        var found: [String] = []
+        while let url = walker?.nextObject() as? URL {
+            let path = url.resolvingSymlinksInPath().path
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true,
+                  !path.contains("/_RUSHES/") else { continue }
+            found.append(String(path.dropFirst(root.path.count + 1)))
+        }
+        return found.sorted()
+    }
+
+    @Test("a backup cancelled with a file still being read back leaves every finished file journaled")
+    func cancelledInFlight() throws {
+        let box = try Sandbox()
+        let (_, plan, drives) = try photoCard(box, shots: 8)
+        let done = Locked(0)
+        let report = Backup.run(plan, drives: drives, isCancelled: { done.read { $0 >= 3 } }) { state in
+            done.write { $0 = state.filesDone }
+        }
+        #expect(report.cancelled)
+        #expect(report.filesCopied < 8)
+        for drive in drives {
+            let journaled = Journal.read(on: drive).filter { $0.kind == .file }.compactMap(\.path).sorted()
+            #expect(files(on: drive) == journaled, "a finished file outside the journal, or a partial left")
+            #expect(journaled.count == report.filesCopied)
+        }
+    }
+
+    @Test("a file the card will not give up costs that file only, before and after it are saved")
+    func unreadableInFlight() throws {
+        let box = try Sandbox()
+        let (card, plan, drives) = try photoCard(box, shots: 6)
+        let locked = card.appendingPathComponent("DCIM/100MSDCF/DSC00003.ARW")
+        chmod(locked.path, 0)
+        defer { chmod(locked.path, 0o644) }
+        let report = Backup.run(plan, drives: drives, isCancelled: { false }) { _ in }
+        #expect(report.stopped == nil)
+        #expect(report.filesCopied == 5)
+        #expect(report.failures.map(\.file) == ["DCIM/100MSDCF/DSC00003.ARW"])
+        #expect(report.groupsCopied == 5)
+        for drive in drives {
+            let journaled = Journal.read(on: drive).filter { $0.kind == .file }.compactMap(\.path).sorted()
+            #expect(files(on: drive) == journaled)
+            #expect(journaled.count == 5)
+        }
+    }
+
     @Test("the manifest's hash is the file's")
     func hashMatches() throws {
         let box = try Sandbox()
@@ -182,8 +250,49 @@ final class Counter: @unchecked Sendable {
     func bump() { lock.withLock { count += 1 } }
 }
 
+/// An exFAT volume in memory, a device of its own: a card and two drives made
+/// this way do not share one SSD, as on a real night they do not.
+final class RAMVolume {
+    let mountPoint: URL
+    private let device: String
+
+    init?(megabytes: Int) {
+        guard let device = RAMVolume.output("/usr/bin/hdiutil", ["attach", "-nomount", "ram://\(megabytes * 2048)"]),
+              device.hasPrefix("/dev/") else { return nil }
+        self.device = device
+        mountPoint = FileManager.default.temporaryDirectory.appendingPathComponent("rushes-ram-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
+        guard RAMVolume.output("/sbin/newfs_exfat", ["-v", "RUSHESRAM", device]) != nil,
+              RAMVolume.output("/usr/sbin/diskutil", ["mount", "-mountOptions", "nobrowse", "-mountPoint", mountPoint.path, device]) != nil
+        else {
+            _ = RAMVolume.output("/usr/bin/hdiutil", ["detach", "-force", device])
+            return nil
+        }
+    }
+
+    deinit {
+        _ = RAMVolume.output("/usr/sbin/diskutil", ["unmount", "force", mountPoint.path])
+        _ = RAMVolume.output("/usr/bin/hdiutil", ["detach", "-force", device])
+        try? FileManager.default.removeItem(at: mountPoint)
+    }
+
+    private static func output(_ tool: String, _ arguments: [String]) -> String? {
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: tool)
+        task.arguments = arguments
+        task.standardOutput = pipe
+        task.standardError = FileHandle.nullDevice
+        do { try task.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        guard task.terminationStatus == 0 else { return nil }
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 // RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter bench
-@Suite("Bench", .enabled(if: ProcessInfo.processInfo.environment["RUSHES_BENCH"] != nil))
+@Suite("Bench", .serialized, .enabled(if: ProcessInfo.processInfo.environment["RUSHES_BENCH"] != nil))
 struct Bench {
     @Test("copy and check 2 GB to two folders")
     func bench() throws {
@@ -210,5 +319,60 @@ struct Bench {
                             modified: .now, created: .now, isCancelled: { false }, advance: { _, _ in })
         let seconds = Date().timeIntervalSince(start)
         print("BENCH hash \(Int(hashSpeed)) MB/s; copy+check 2 GB to 2 folders in \(String(format: "%.1f", seconds)) s")
+    }
+
+    /// The card on a disk image, attached again so it is read cold. The
+    /// drives on images too (exFAT, as they are sold), or as plain folders,
+    /// where the disk-image layer does not set the pace.
+    @Test("a photo card of 300 files to two drives, whole backup", arguments: [true, false])
+    func photoCard(exFAT: Bool) throws {
+        guard let volume = TestVolume("ExFAT", megabytes: 2600) else { return }
+        let box = try Sandbox()
+        let images = exFAT ? [TestVolume("ExFAT", megabytes: 2600), TestVolume("ExFAT", megabytes: 2600)].compactMap { $0 } : []
+        let drives = exFAT ? images.map(\.mountPoint) : [try box.folder("A"), try box.folder("B")]
+        guard drives.count == 2 else { return }
+        try photoBackup(card: volume.mountPoint, drives: drives, shots: 150, label: exFAT ? "exFAT images" : "folders") {
+            volume.remount()
+        }
+    }
+
+    /// Card and drives on three devices of their own: what the pipeline is
+    /// for, the card read while the drives read back.
+    @Test("a photo card of 140 files to two drives, card and drives apart")
+    func photoCardApart() throws {
+        guard let card = RAMVolume(megabytes: 1100), let a = RAMVolume(megabytes: 1100), let b = RAMVolume(megabytes: 1100) else { return }
+        try photoBackup(card: card.mountPoint, drives: [a.mountPoint, b.mountPoint], shots: 70, label: "RAM disks") {}
+    }
+
+    private func photoBackup(card: URL, drives: [URL], shots: Int, label: String, cool: () -> Void) throws {
+        var generator = SystemRandomNumberGenerator()
+        var block = [UInt64](repeating: 0, count: 1 << 17)
+        for i in block.indices { block[i] = generator.next() }
+        let mb = block.withUnsafeBytes { Data($0) }
+        let t = local(2026, 9, 21, 23, 30)
+        for n in 1...shots {
+            for (ext, megabytes) in [("ARW", 12), ("JPG", 2)] {
+                let url = card.appendingPathComponent(String(format: "DCIM/100MSDCF/DSC%05d.%@", n, ext))
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                var data = Data(capacity: megabytes << 20)
+                for _ in 0..<megabytes { data.append(mb) }
+                data.replaceSubrange(0..<8, with: withUnsafeBytes(of: UInt64(n)) { Data($0) })
+                try data.write(to: url)
+                try FileManager.default.setAttributes([.modificationDate: t.addingTimeInterval(Double(n))], ofItemAtPath: url.path)
+            }
+        }
+        cool()
+        let scan = try CardScanner.scan(card)
+        var settings = IngestSettings()
+        settings.client = "Kaffi"
+        settings.project = "Lexus"
+        let sources = [PlanSource(id: card.path, volumeName: "CARD", cameraLabel: "A", groups: scan.groups)]
+        let plan = Planner.plan(sources: sources, settings: settings, fixedDay: nil, drives: drives)
+        let start = Date()
+        let report = Backup.run(plan, drives: drives, isCancelled: { false }) { _ in }
+        let seconds = Date().timeIntervalSince(start)
+        #expect(report.succeeded, "\(report.failures)")
+        let megabytes = Double(report.bytesCopied) / 1_048_576
+        print("BENCH photo card \(report.filesCopied) files, \(Int(megabytes)) MB to 2 \(label) in \(String(format: "%.2f", seconds)) s (\(Int(megabytes / seconds)) MB/s of card)")
     }
 }

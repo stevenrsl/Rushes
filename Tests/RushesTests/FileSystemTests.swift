@@ -33,6 +33,15 @@ final class TestVolume {
         }
     }
 
+    /// Detached and attached again, so nothing of it is left in the Mac's
+    /// cache: a bench reads it as a card freshly plugged in.
+    func remount() {
+        _ = TestVolume.run("/usr/bin/hdiutil", ["detach", "-quiet", "-force", mountPoint.path])
+        _ = TestVolume.run("/usr/bin/hdiutil", [
+            "attach", "-quiet", "-nobrowse", "-noverify", "-mountpoint", mountPoint.path, image.path
+        ])
+    }
+
     deinit {
         _ = TestVolume.run("/usr/bin/hdiutil", ["detach", "-quiet", "-force", mountPoint.path])
         try? FileManager.default.removeItem(at: image)
@@ -84,6 +93,26 @@ struct FileSystemTests {
         #expect(try Data(contentsOf: target) == data)
         #expect(try Copier.hash(of: target) == hash)
         #expect(!FileManager.default.fileExists(atPath: Copier.partialURL(for: target).path))
+    }
+
+    /// The camera's dates are set on the open copy, before its sync, and must
+    /// still be there once it is named, on every file system a drive comes in.
+    @Test("a copy keeps the camera's dates on exFAT, FAT32 and APFS", arguments: ["ExFAT", "MS-DOS FAT32", "APFS"])
+    func keepsDates(filesystem: String) throws {
+        guard let volume = TestVolume(filesystem) else { return }
+        let box = try Sandbox()
+        let card = try box.folder("CARD")
+        try box.write("DCIM/100MSDCF/DSC00001.ARW", in: card, size: 300_000, date: Date())
+        let source = card.appendingPathComponent("DCIM/100MSDCF/DSC00001.ARW")
+        let target = volume.mountPoint.appendingPathComponent("shoot/A_0001.ARW")
+        let created = local(2026, 9, 21, 23, 30, 2)
+        let modified = local(2026, 9, 21, 23, 31, 4)
+
+        _ = try Copier.copy(source, to: [target], modified: modified, created: created, isCancelled: { false }) { _, _ in }
+
+        let values = try target.resourceValues(forKeys: [.contentModificationDateKey, .creationDateKey])
+        #expect(values.contentModificationDate.map { abs($0.timeIntervalSince(modified)) < 2 } == true)
+        #expect(values.creationDate.map { abs($0.timeIntervalSince(created)) < 2 } == true)
     }
 
     /// The rule that holds the whole app: a name already taken is a conflict,

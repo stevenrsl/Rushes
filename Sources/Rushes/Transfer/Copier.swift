@@ -28,6 +28,20 @@ enum Copier {
         final.deletingLastPathComponent().appendingPathComponent(".\(final.lastPathComponent).rushes-partial")
     }
 
+    /// A file written to every drive and synced there, under its hidden
+    /// name: not yet read back, not yet named. `verify` finishes it,
+    /// `discard` takes it back.
+    struct Written: Sendable {
+        let source: URL
+        let partials: [URL]
+        let targets: [URL]
+        /// The volume of each copy, so drives that are separate disks are read
+        /// back at the same time, and a volume known to refuse `RENAME_EXCL`
+        /// is not asked again.
+        let devices: [dev_t]
+        let hash: UInt64
+    }
+
     /// Copies `source` to each of `targets` and checks every copy.
     /// `advance` is called with bytes read from the card, then with bytes read
     /// back from the drives (`true`). `size` is what the scan saw: a
@@ -42,6 +56,25 @@ enum Copier {
         isCancelled: @escaping @Sendable () -> Bool,
         advance: (Int64, Bool) -> Void
     ) throws -> String {
+        let buffers = Buffers()
+        let written = try write(source, to: targets, size: size, modified: modified, created: created,
+                                buffers: buffers, isCancelled: isCancelled) { advance($0, false) }
+        return try verify(written, buffers: buffers, isCancelled: isCancelled) { advance($0, true) }
+    }
+
+    /// The first half of `copy`: the card read once, every drive written and
+    /// synced. A backup reads the next file from the card while this one is
+    /// read back, so the card never waits for the drives.
+    static func write(
+        _ source: URL,
+        to targets: [URL],
+        size: Int64? = nil,
+        modified: Date,
+        created: Date,
+        buffers: Buffers,
+        isCancelled: () -> Bool,
+        advance: (Int64) -> Void
+    ) throws -> Written {
         let partials = targets.map(partialURL(for:))
         var succeeded = false
         defer {
@@ -61,6 +94,7 @@ enum Copier {
         _ = fcntl(input, F_NOCACHE, 1)
 
         var outputs: [Int32] = []
+        var devices: [dev_t] = []
         defer { for fd in outputs { close(fd) } }
         for partial in partials {
             unlink(partial.path) // A leftover from a backup that was cut off.
@@ -68,12 +102,14 @@ enum Copier {
             guard fd >= 0 else { throw posix(errno, "Écriture impossible sur \(volumeName(of: partial))") }
             _ = fcntl(fd, F_NOCACHE, 1)
             outputs.append(fd)
+            var info = stat()
+            devices.append(fstat(fd, &info) == 0 ? info.st_dev : -1)
         }
 
         var read: Int64 = 0
-        let hash = try stream(from: input, to: outputs, source: source, targets: targets, isCancelled: isCancelled) {
+        let hash = try stream(from: input, to: outputs, source: source, targets: targets, buffers: buffers, isCancelled: isCancelled) {
             read += $0
-            advance($0, false)
+            advance($0)
         }
         // A reader that gives up early says "end of file", and a copy of what
         // it did give would check out perfectly against itself.
@@ -81,17 +117,73 @@ enum Copier {
             throw Failure(message: "La carte a rendu \(read) octets de « \(source.lastPathComponent) » au lieu de \(size) : le lecteur ou la carte a peut-être un problème.")
         }
 
-        for (fd, partial) in zip(outputs, partials) {
-            guard fsync(fd) == 0 else { throw posix(errno, "Écriture incomplète sur \(volumeName(of: partial))") }
+        // The camera's dates go on through the open file, before the sync
+        // that makes them last with the bytes. Separate disks sync at once;
+        // two copies on one disk wait for each other, which is faster there.
+        let fds = outputs
+        let synced = Results(count: fds.count)
+        func sync(_ i: Int) {
+            setDates(fds[i], modified: modified, created: created)
+            synced.set(i, fsync(fds[i]) == 0 ? 0 : errno)
+        }
+        if separateDisks(devices) {
+            DispatchQueue.concurrentPerform(iterations: fds.count, execute: sync)
+        } else {
+            fds.indices.forEach(sync)
+        }
+        for (code, partial) in zip(synced.values, partials) where code != 0 {
+            throw posix(Int32(code), "Écriture incomplète sur \(volumeName(of: partial))")
         }
         for fd in outputs { close(fd) }
         outputs.removeAll()
 
-        // One drive after the other. Reading both at once was tried
-        // (2026-09-29) and was two to three times slower on one SSD; on two
-        // separate disks it may win, which only real drives can tell.
-        for (partial, target) in zip(partials, targets) {
-            let check = try readHash(of: partial, isCancelled: isCancelled) { advance($0, true) }
+        succeeded = true
+        return Written(source: source, partials: partials, targets: targets, devices: devices, hash: hash)
+    }
+
+    /// The second half of `copy`: every drive's copy read back around the
+    /// cache and compared with the card, then named on every drive or on
+    /// none. Whatever goes wrong, the hidden copies go.
+    static func verify(
+        _ written: Written,
+        buffers: Buffers,
+        isCancelled: @escaping @Sendable () -> Bool,
+        advance: (Int64) -> Void
+    ) throws -> String {
+        let (partials, targets, hash) = (written.partials, written.targets, written.hash)
+        var succeeded = false
+        defer {
+            if !succeeded { discard(written) }
+        }
+
+        // Separate disks are read back at once, each at its own pace. Two
+        // copies on one disk are read one after the other: reading both at
+        // once was two to three times slower on one SSD (2026-09-29).
+        let parallel = separateDisks(written.devices)
+        let checks = Results(count: partials.count)
+        let errors = ErrorBox()
+        let lock = NSLock()
+        func readBack(_ i: Int) {
+            do {
+                let check = try readHash(of: partials[i], buffers: buffers, isCancelled: isCancelled) { bytes in
+                    lock.withLock { advance(bytes) }
+                }
+                checks.set(i, Int64(bitPattern: check))
+            } catch {
+                errors.set(error)
+            }
+        }
+        if parallel {
+            DispatchQueue.concurrentPerform(iterations: partials.count, execute: readBack)
+        } else {
+            for i in partials.indices {
+                readBack(i)
+                if errors.value != nil { break }
+            }
+        }
+        if let error = errors.value { throw error }
+        for (i, target) in targets.enumerated() {
+            let check = UInt64(bitPattern: checks.values[i])
             guard check == hash else {
                 throw Failure(message: "La copie de « \(target.lastPathComponent) » sur \(volumeName(of: target)) ne correspond pas à la carte (xxh64 \(hex(check)) au lieu de \(hex(hash))).")
             }
@@ -102,9 +194,8 @@ enum Copier {
         // record, and the shot copied again under another number tomorrow.
         var named: [URL] = []
         do {
-            for (partial, target) in zip(partials, targets) {
-                try? FileManager.default.setAttributes([.modificationDate: modified, .creationDate: created], ofItemAtPath: partial.path)
-                try name(partial, target)
+            for (i, (partial, target)) in zip(partials, targets).enumerated() {
+                try name(partial, target, device: written.devices[i])
                 named.append(target)
             }
         } catch {
@@ -114,6 +205,33 @@ enum Copier {
         succeeded = true
         return hex(hash)
     }
+
+    /// Whether each copy lies on a volume of its own, so working on all of
+    /// them at once is working on several disks at once.
+    private static func separateDisks(_ devices: [dev_t]) -> Bool {
+        devices.count > 1 && Set(devices).count == devices.count && !devices.contains(-1)
+    }
+
+    /// Takes back a file written but never named.
+    static func discard(_ written: Written) {
+        for partial in written.partials { unlink(partial.path) }
+    }
+
+    /// The camera's dates, set on the open copy.
+    private static func setDates(_ fd: Int32, modified: Date, created: Date) {
+        var list = attrlist()
+        list.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
+        list.commonattr = attrgroup_t(ATTR_CMN_CRTIME | ATTR_CMN_MODTIME)
+        // In the order of their bits: creation, then modification.
+        var times = (timespec(created), timespec(modified))
+        _ = fsetattrlist(fd, &list, &times, MemoryLayout.size(ofValue: times), 0)
+    }
+
+    /// Volumes that answered `ENOTSUP` to `RENAME_EXCL`, so the next copy goes
+    /// straight to the reservation. Only ever a shortcut to the slower of two
+    /// safe ways: a device number given again to another volume costs time,
+    /// never a file.
+    private static let noExclusiveRename = Locked(Set<dev_t>())
 
     /// Gives a checked copy its final name without ever replacing a file.
     ///
@@ -125,12 +243,19 @@ enum Copier {
     /// off in between, it leaves an empty file, which the planner reads as a
     /// name already taken: a conflict, never a file that looks finished.
     static func name(_ partial: URL, _ target: URL) throws {
-        if renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 { return }
-        let code = errno
-        if code == EEXIST { throw appeared(target) }
-        // Some network and FUSE file systems say EINVAL or ENOSYS for the
-        // flag they do not know.
-        guard [ENOTSUP, EINVAL, ENOSYS].contains(code) else { throw posix(code, "Impossible de nommer « \(target.lastPathComponent) »") }
+        try name(partial, target, device: -1)
+    }
+
+    private static func name(_ partial: URL, _ target: URL, device: dev_t) throws {
+        if device == -1 || !noExclusiveRename.read({ $0.contains(device) }) {
+            if renamex_np(partial.path, target.path, UInt32(RENAME_EXCL)) == 0 { return }
+            let code = errno
+            if code == EEXIST { throw appeared(target) }
+            // Some network and FUSE file systems say EINVAL or ENOSYS for the
+            // flag they do not know.
+            guard [ENOTSUP, EINVAL, ENOSYS].contains(code) else { throw posix(code, "Impossible de nommer « \(target.lastPathComponent) »") }
+            if device != -1 { noExclusiveRename.write { _ = $0.insert(device) } }
+        }
 
         let reserved = open(target.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
         guard reserved >= 0 else {
@@ -151,20 +276,21 @@ enum Copier {
     }
 
     /// Reads the card and writes every drive, the next chunk read while the
-    /// last one is written.
+    /// last one is written and hashed.
     private static func stream(
         from input: Int32,
         to outputs: [Int32],
         source: URL,
         targets: [URL],
+        buffers: Buffers,
         isCancelled: () -> Bool,
         advance: (Int64) -> Void
     ) throws -> UInt64 {
-        let front = UnsafeMutableRawPointer.allocate(byteCount: chunkSize, alignment: 16384)
-        let back = UnsafeMutableRawPointer.allocate(byteCount: chunkSize, alignment: 16384)
+        let front = buffers.take()
+        let back = buffers.take()
         defer {
-            front.deallocate()
-            back.deallocate()
+            buffers.give(front)
+            buffers.give(back)
         }
 
         var hasher = XXHash64()
@@ -177,9 +303,11 @@ enum Copier {
         while count > 0 {
             if isCancelled() { throw CancellationError() }
             let group = DispatchGroup()
-            // Shared with the writers for as long as `group.wait()` below: the
-            // buffer is not read into again until every write has returned.
+            // Shared with the writers and the reader for as long as
+            // `group.wait()` below: neither buffer is touched again until
+            // every one of them has returned.
             nonisolated(unsafe) let chunk = UnsafeRawBufferPointer(start: current, count: count)
+            nonisolated(unsafe) let ahead = next
             for (fd, target) in zip(outputs, targets) {
                 queue.async(group: group) {
                     if !writeFully(fd, chunk) {
@@ -187,25 +315,28 @@ enum Copier {
                     }
                 }
             }
+            let nextCount = ReadResult()
+            queue.async(group: group) {
+                nextCount.value = Result { try readFully(input, into: ahead, from: source) }
+            }
             hasher.update(chunk)
-            let nextCount = Result { try readFully(input, into: next, from: source) }
             group.wait()
             if let error = errors.value { throw error }
             advance(Int64(count))
-            count = try nextCount.get()
+            count = try nextCount.value!.get()
             swap(&current, &next)
         }
         return hasher.digest()
     }
 
     /// Reads a copy back from the drive, around its cache, and hashes it.
-    private static func readHash(of url: URL, isCancelled: () -> Bool, advance: (Int64) -> Void) throws -> UInt64 {
+    private static func readHash(of url: URL, buffers: Buffers = Buffers(), isCancelled: () -> Bool, advance: (Int64) -> Void) throws -> UInt64 {
         let fd = open(url.path, O_RDONLY)
         guard fd >= 0 else { throw posix(errno, "Relecture impossible sur \(volumeName(of: url))", at: url) }
         defer { close(fd) }
         _ = fcntl(fd, F_NOCACHE, 1)
-        let buffer = UnsafeMutableRawPointer.allocate(byteCount: chunkSize, alignment: 16384)
-        defer { buffer.deallocate() }
+        let buffer = buffers.take()
+        defer { buffers.give(buffer) }
         var hasher = XXHash64()
         while true {
             if isCancelled() { throw CancellationError() }
@@ -227,6 +358,26 @@ enum Copier {
         hex(try readHash(of: url, isCancelled: isCancelled, advance: advance))
     }
 
+    /// The 8 MB buffers a backup reads and writes through, kept from one file
+    /// to the next rather than asked of the system twice per file, and given
+    /// back when the backup ends.
+    final class Buffers: @unchecked Sendable {
+        private let lock = NSLock()
+        private var free: [UnsafeMutableRawPointer] = []
+
+        func take() -> UnsafeMutableRawPointer {
+            lock.withLock { free.popLast() } ?? .allocate(byteCount: chunkSize, alignment: 16384)
+        }
+
+        func give(_ buffer: UnsafeMutableRawPointer) {
+            lock.withLock { free.append(buffer) }
+        }
+
+        deinit {
+            for buffer in free { buffer.deallocate() }
+        }
+    }
+
     private static func readFully(_ fd: Int32, into buffer: UnsafeMutableRawPointer, from url: URL) throws -> Int {
         var filled = 0
         while filled < chunkSize {
@@ -244,7 +395,7 @@ enum Copier {
     private static func writeFully(_ fd: Int32, _ chunk: UnsafeRawBufferPointer) -> Bool {
         var written = 0
         while written < chunk.count {
-            let n = write(fd, chunk.baseAddress! + written, chunk.count - written)
+            let n = Darwin.write(fd, chunk.baseAddress! + written, chunk.count - written)
             if n < 0 {
                 if errno == EINTR { continue }
                 return false
@@ -276,6 +427,37 @@ enum Copier {
         // reader is there and this one file is the one at fault.
         if gone, let url { gone = access(url.deletingLastPathComponent().path, R_OK) != 0 }
         return Failure(message: "\(message) (\(String(cString: strerror(code)))).", fatal: alwaysFatal || gone)
+    }
+}
+
+/// What the parallel reads and syncs found, one slot each.
+private final class Results: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [Int64]
+    init(count: Int) { stored = Array(repeating: 0, count: count) }
+    var values: [Int64] { lock.withLock { stored } }
+    func set(_ index: Int, _ value: Int64) { lock.withLock { stored[index] = value } }
+    func set(_ index: Int, _ value: Int32) { set(index, Int64(value)) }
+}
+
+/// The next chunk read while the last is written, handed over by `group.wait()`.
+private final class ReadResult: @unchecked Sendable {
+    var value: Result<Int, Error>?
+}
+
+/// A value shared across threads.
+final class Locked<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+    init(_ value: Value) { self.value = value }
+    func read<T>(_ body: (Value) -> T) -> T { lock.withLock { body(value) } }
+    func write<T>(_ body: (inout Value) -> T) -> T { lock.withLock { body(&value) } }
+}
+
+private extension timespec {
+    init(_ date: Date) {
+        let seconds = date.timeIntervalSince1970.rounded(.down)
+        self.init(tv_sec: Int(seconds), tv_nsec: Int((date.timeIntervalSince1970 - seconds) * 1_000_000_000))
     }
 }
 

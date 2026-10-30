@@ -12,12 +12,12 @@ is written for Rushes, with no dependency. Same build as Cairn
 and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 
 ```bash
-./build.sh                                          # release build → build/Rushes.app
+./build.sh                                          # release build → build/Rushes.app (stripped, its dSYM beside)
 ./build.sh debug
 ./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
 ./build.sh release-selfsigned                       # the beta's .dmg: self-signed "Rushes", not notarised
 Tools/make-signing-certificate.sh ~/backup.p12      # that certificate, made once; pins it in install.sh
-swift test --scratch-path /tmp/rushes-build         # 135 tests; benches and snapshots skipped unless asked
+swift test --scratch-path /tmp/rushes-build         # 140 tests; benches and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
@@ -78,15 +78,25 @@ exists nowhere else, and never for all the cards at once; the format offered fro
 page follows it card by card.
 
 **Verified means read back from the drive.** The card is read once in 8 MB chunks; each chunk
-is hashed (XXH64) and written to every drive in parallel while the next is read. Each drive's
-copy is then read again and hashed, one drive after the other. Reads and writes use
+is written to every drive in parallel and hashed (XXH64) while the next is read. The camera's
+dates go on through the open copy, then it is fsynced (`Copier.write`). Each drive's copy is
+then read again and hashed, and named only if it matches (`Copier.verify`). Reads and writes use
 `F_NOCACHE`: reading back from memory would prove nothing. The bytes read from the card must
 equal the size the scan saw: a reader that gives up says "end of file", and a copy of what it
 gave would check out against itself. A copy is named on every drive or on none. Measured
 2026-09-21 on the internal SSD: XXH64 at ~24 GB/s, 2 GB copied to two folders and checked in
-2.8 s. Reading the drives back in parallel was tried on 2026-09-29 and was two to three times
-slower on one SSD; on two separate hard drives the read-back, not the card, may be the limit,
-which only real drives can settle.
+2.8 s.
+
+Since 2026-10-30 (Steven: "le transfert le plus rapide possible") the card never waits for the
+drives: `Backup` reads file N+1 from the card while file N is read back, named and journaled
+on its own queue, one file in flight at most, its partial taken back if the backup stops
+first. Drives on separate volumes are read back and synced at the same time; two copies on one
+volume still go one after the other, since reading both at once was two to three times slower
+on one SSD (2026-09-29) and syncing both was slower too. The copying page says "Vérification
+des copies" only when the card is not being read. The 8 MB buffers are kept from one file to
+the next (`Copier.Buffers`) and given back when the backup ends. Measured with the card and
+two drives as three exFAT RAM disks (`Bench/photoCardApart`): 140 photos, 980 MB, 1.59 s
+before, 1.06 s after. On one SSD, where every byte crosses the same disk, nothing changes.
 
 **The drive keeps the history, not the Mac.** Each backup writes `_RUSHES/<yyMMdd-HHmmss>.json`
 and `.csv` in the shoot's folder on every drive: card path, new path, size, xxh64, fingerprint.

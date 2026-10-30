@@ -105,6 +105,15 @@ STAGE="$SCRATCH/Rushes.app"
 rm -rf "$STAGE"
 mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources/fr.lproj"
 cp "$BIN" "$STAGE/Contents/MacOS/Rushes"
+# A release carries no local symbols: 4.3 MB of binary becomes 1.9. The dSYM
+# beside build/ keeps them, so a tester's crash report can still be read.
+if [ "$CONFIG" = release ]; then
+  rm -rf build/Rushes.app.dSYM
+  mkdir -p build
+  dsymutil "$BIN" -o "$SCRATCH/Rushes.app.dSYM"
+  ditto --noextattr --norsrc "$SCRATCH/Rushes.app.dSYM" build/Rushes.app.dSYM
+  strip -x "$STAGE/Contents/MacOS/Rushes"
+fi
 cp Support/Info.plist "$STAGE/Contents/Info.plist"
 # The only localisation the bundle declares is French, so AppKit draws its own
 # menus (Édition, Fenêtre, Quitter) in French whatever the Mac is set to.
