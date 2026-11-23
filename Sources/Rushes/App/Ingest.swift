@@ -71,6 +71,9 @@ final class Ingest {
     /// A day typed by hand for the whole backup. Not remembered: the next
     /// night is another day.
     var fixedDay: ShootDay? { didSet { schedulePlan() } }
+    /// What becomes of the shots of each day apart from the shoot, chosen on
+    /// the page. Not remembered either: absent is "à leur date".
+    var dayFiling: [ShootDay: DayFiling] = [:] { didSet { if dayFiling != oldValue { schedulePlan() } } }
     private(set) var plan = IngestPlan()
     /// The preview's rows, made with the plan, off the main thread.
     private(set) var preview = PreviewRows()
@@ -338,17 +341,20 @@ final class Ingest {
             countedCards = readyIDs
             countedCutoff = settings.dayCutoffHour
             presentKinds = countKinds()
-            let dates = readyCards.flatMap { $0.scan!.groups.map(\.captureDate) }
-            detectedDays = Array(Set(dates.map { ShootDay(date: $0, cutoffHour: settings.dayCutoffHour) })).sorted()
+            // The shoot's days only: two photos of the 14th left on the card
+            // are said apart, with their own choice, not as a second day.
+            detectedDays = DaySpread.of(sources.flatMap(\.groups), cutoffHour: settings.dayCutoffHour).main
+            if readyIDs.isEmpty, !dayFiling.isEmpty { dayFiling = [:] }
         }
         let settings = settings
         let fixedDay = fixedDay
+        let dayFiling = dayFiling
         let days = fixedDay.map { [$0] } ?? detectedDays
         let drives = onlineDrives.map(\.url)
         planTask = Task.detached(priority: .userInitiated) {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, drives: drives, isCancelled: { Task.isCancelled })
+            var plan = Planner.plan(sources: sources, settings: settings, fixedDay: fixedDay, dayFiling: dayFiling, drives: drives, isCancelled: { Task.isCancelled })
             plan.drives = drives.map(\.path)
             plan.generation = generation
             plan.namePattern = settings.namePattern
@@ -357,7 +363,7 @@ final class Ingest {
             plan.initials = settings.initials
             plan.writesMHL = settings.writeMHL
             guard !Task.isCancelled else { return }
-            plan.continuation = ShootContinuation.find(sources: sources, days: days, settings: settings, drives: drives)
+            plan.continuation = ShootContinuation.find(sources: sources, days: days, settings: settings, drives: drives, spread: plan.spread)
             let preview = PreviewRows(plan: plan, sources: sources, settings: settings)
             guard !Task.isCancelled else { return }
             let finished = plan

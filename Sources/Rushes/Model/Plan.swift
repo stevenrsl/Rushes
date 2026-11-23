@@ -35,6 +35,9 @@ enum GroupStatus: Hashable, Sendable {
     /// No destination receives its kind (photos, videos, sounds). It holds the
     /// backup back, as a conflict does: a shot no drive takes is not saved.
     case noDrive
+    /// Taken on a day apart from the shoot, and left on the card by choice
+    /// (`DayFiling.leave`). Not copied, no number; the card is "à vérifier".
+    case leftOnCard
 }
 
 struct PlannedGroup: Identifiable, Hashable, Sendable {
@@ -83,6 +86,8 @@ struct IngestPlan: Sendable {
     /// The shoot these cards carry on, when the drives remember one: see
     /// `ShootContinuation`.
     var continuation: ShootContinuation?
+    /// The shoot's days and the days apart from it, for the page.
+    var spread = DaySpread()
 
     // Counted once per plan rather than at each of the page's many reads:
     // every redraw asked for them again, over every shot of every card.
@@ -91,6 +96,8 @@ struct IngestPlan: Sendable {
     private(set) var bytesToCopy: Int64 = 0
     private(set) var alreadyCopied = 0
     private(set) var unticked = 0
+    /// Shots of a day apart from the shoot, left on the card by choice.
+    private(set) var leftOnCard = 0
     private(set) var conflicts: [PlannedGroup] = []
     private(set) var leftOutCount = 0
     private(set) var days: [ShootDay] = []
@@ -112,6 +119,7 @@ struct IngestPlan: Sendable {
         bytesToCopy = toCopy.reduce(0) { $0 + $1.size }
         alreadyCopied = groups.filter { $0.status == .alreadyCopied }.count
         unticked = groups.filter { $0.status == .unticked }.count
+        leftOnCard = groups.filter { $0.status == .leftOnCard }.count
         conflicts = groups.filter { if case .conflict = $0.status { true } else { false } }
         leftOutCount = groups.reduce(0) { $0 + $1.leftOut.count }
         days = Array(Set(toCopy.map(\.day))).sorted()
@@ -203,6 +211,7 @@ enum Planner {
         sources: [PlanSource],
         settings: IngestSettings,
         fixedDay: ShootDay?,
+        dayFiling: [ShootDay: DayFiling] = [:],
         drives: [URL],
         index: (URL, String) -> DestinationIndex = DestinationIndex.load,
         journal: (URL) -> DriveJournal = DriveJournal.load,
@@ -216,7 +225,13 @@ enum Planner {
         let project = Sanitize.field(settings.project)
 
         let order = Dictionary(uniqueKeysWithValues: sources.enumerated().map { ($1.id, $0) })
-        let items = sources.flatMap { source in source.groups.map { (source, $0) } }.sorted { a, b in
+        let spread = DaySpread.of(sources.flatMap(\.groups), cutoffHour: settings.dayCutoffHour)
+        let ownDay = { (group: MediaGroup) in ShootDay(date: group.captureDate, cutoffHour: settings.dayCutoffHour) }
+        // Days apart from the shoot come after it: filed with it, they take
+        // the numbers after tonight's rather than 0001 and 0002.
+        let straggling = Set(spread.stragglers.map(\.day))
+        let items = sources.flatMap { source in source.groups.map { (source, $0, straggling.contains(ownDay($0))) } }.sorted { a, b in
+            if a.2 != b.2 { return !a.2 }
             if a.1.captureDate != b.1.captureDate { return a.1.captureDate < b.1.captureDate }
             if a.0.id != b.0.id { return order[a.0.id]! < order[b.0.id]! }
             return a.1.key < b.1.key
@@ -252,11 +267,18 @@ enum Planner {
         var planned: [PlannedGroup] = []
         var folders: [String] = []
 
-        for (source, group) in items {
+        for (source, group, isStraggler) in items {
             // A newer keystroke has made this plan useless; each shot costs a
             // walk of the drives' folders and a stat per file.
             if isCancelled() { break }
-            let day = fixedDay ?? ShootDay(date: group.captureDate, cutoffHour: settings.dayCutoffHour)
+            // A day fixed by hand is the shoot's: a shot of another day keeps
+            // its own unless it is filed with the shoot.
+            let filing = isStraggler ? dayFiling[ownDay(group)] ?? .ownDay : nil
+            let day: ShootDay
+            switch filing {
+            case nil, .withShoot?: day = fixedDay ?? (isStraggler ? spread.target ?? ownDay(group) : ownDay(group))
+            case .ownDay?, .leave?: day = ownDay(group)
+            }
             var values = NameValues(
                 day: day,
                 time: timeFormat.string(from: group.captureDate),
@@ -292,8 +314,6 @@ enum Planner {
                 ))
                 continue
             }
-            if !folders.contains(shootFolder) { folders.append(shootFolder) }
-
             // Tonight's folder knows a card that was not formatted; the drive's
             // journal knows it whatever it was filed under, so renaming the
             // client does not file yesterday's shots under tonight's.
@@ -317,6 +337,20 @@ enum Planner {
                 ))
                 continue
             }
+            // Left on the card by choice: after the check above, so a shot
+            // already on every drive is said saved, not left behind.
+            if filing == .leave {
+                planned.append(PlannedGroup(
+                    group: group, sourceID: source.id, volumeName: source.volumeName, day: day,
+                    baseName: "", shootFolder: "", files: [], leftOut: leftOut, status: .leftOnCard,
+                    drives: targets.map(\.path)
+                ))
+                continue
+            }
+            // Only a folder that receives something tonight: a card's shots
+            // of another day, all saved already, made one named after
+            // tonight's client.
+            if !folders.contains(shootFolder) { folders.append(shootFolder) }
 
             if template.uses(.number) {
                 let category = settings.sharedCounter ? nil : group.category
@@ -369,7 +403,22 @@ enum Planner {
                 drives: targets.map(\.path)
             ))
         }
-        return IngestPlan(groups: planned, shootFolders: folders)
+        var plan = IngestPlan(groups: planned, shootFolders: folders)
+        var told = spread
+        if !told.stragglers.isEmpty {
+            let at = Dictionary(uniqueKeysWithValues: told.stragglers.enumerated().map { ($1.day, $0) })
+            for group in planned {
+                guard let i = at[ownDay(group.group)] else { continue }
+                if group.status == .alreadyCopied {
+                    told.stragglers[i].saved += 1
+                    if told.stragglers[i].savedIn == nil { told.stragglers[i].savedIn = group.savedIn }
+                } else if group.status == .new, told.stragglers[i].folder == nil {
+                    told.stragglers[i].folder = group.shootFolder
+                }
+            }
+        }
+        plan.spread = told
+        return plan
     }
 
     /// What a companion keeps of its own name after its anchor's: Sony's

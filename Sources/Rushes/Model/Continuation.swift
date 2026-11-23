@@ -13,6 +13,11 @@ import Foundation
 /// backup that saved them, whatever day it is. A card with nothing saved yet
 /// belongs to the last backup of the same shoot day, the card's own. Neither
 /// is a guess about the client: both are what was typed at the time.
+///
+/// Only the shoot's own shots are asked about (2026-11-23): two photos of the
+/// 14th left on tonight's card were saved with the 14th's client, and that
+/// backup was offered for tonight's three hundred. Shots of a day apart from
+/// the shoot (`DaySpread`) say nothing about which shoot tonight is.
 struct ShootContinuation: Sendable, Equatable {
     var client: String
     var project: String
@@ -38,6 +43,7 @@ struct ShootContinuation: Sendable, Equatable {
         days: [ShootDay],
         settings: IngestSettings,
         drives: [URL],
+        spread: DaySpread = DaySpread(),
         journal: (URL) -> DriveJournal = DriveJournal.load
     ) -> ShootContinuation? {
         let journals = drives.map(journal)
@@ -48,6 +54,8 @@ struct ShootContinuation: Sendable, Equatable {
         var holding: [String: Int] = [:]
         for source in sources {
             for group in source.groups {
+                if !spread.stragglers.isEmpty,
+                   spread.isStraggling(ShootDay(date: group.captureDate, cutoffHour: settings.dayCutoffHour)) { continue }
                 guard let fingerprint = group.files.first(where: \.role.isPrimary)?.fingerprint else { continue }
                 for journal in journals {
                     if let backup = journal.saved[fingerprint]?.backup, !backup.isEmpty {

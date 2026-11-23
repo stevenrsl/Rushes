@@ -17,7 +17,7 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
 ./build.sh release-selfsigned                       # the beta's .dmg: self-signed "Rushes", not notarised
 Tools/make-signing-certificate.sh ~/backup.p12      # that certificate, made once; pins it in install.sh
-swift test --scratch-path /tmp/rushes-build         # 140 tests; benches and snapshots skipped unless asked
+swift test --scratch-path /tmp/rushes-build         # 151 tests; benches and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
@@ -172,6 +172,7 @@ Sources/Rushes/
               Plan (Planner, DestinationIndex), History, Journal (per-drive record), Verdict,
               Readiness (what holds ⌘↩), Report (the HTML page), MHL (ASC MHL v2),
               Continuation (the shoot an evening's card carries on),
+              Stragglers (the shoot's days and the few shots of another day),
               Diagnostic (a card described for a beta tester to send)
   Transfer/   XXHash64, Copier (one file, every drive, checked), Backup (a whole plan +
               manifests), Audit (a drive read back against its records), Volumes (mount
@@ -256,6 +257,24 @@ A pattern must hold `{NUM}` or `{ORIG}`.
   digits only.
 - **A night shoot keeps its day.** Until the cutoff hour (5 h by default), a shot belongs to
   the day before (`ShootDay`). The day can also be fixed by hand for one backup (not remembered).
+- **A few shots of another day are said, not swallowed** (2026-11-23, Steven: "une ou deux
+  photos qui traînent encore sur la carte SD et ça casse tout"). The cards' days are grouped in
+  runs, days at most two apart (`DaySpread`); the run with the most shots, the latest on a tie,
+  is the shoot, every other day a straggler. Before, two photos of the 14th beside three hundred
+  of the 23rd made a second folder named with tonight's client, a day fixed by hand took them in
+  as 0001 and 0002, the day menu said "2 jours", and when they were already saved the backup
+  that saved them was offered as tonight's shoot (one click filed the 300 under the old
+  client). Now the Tournage section names each straggler day ("Aussi sur la carte : 2 photos du
+  samedi 14 novembre") with a choice for this backup only (`Ingest.dayFiling`, not a setting):
+  "À leur date" (the default, what it always did, now with the folder named), "Avec ce
+  tournage" (the shoot's day, or the day fixed by hand, numbered after tonight's shots since
+  stragglers are planned last), or "Laissées sur la carte" (`GroupStatus.leftOnCard`: no
+  number, listed under "Laissés sur la carte", the card "à vérifier" and never formatable, and
+  never deleted by "Supprimer les fichiers copiés…"). A day fixed by hand is the shoot's only.
+  Shots already on every drive are skipped before the choice is read, and said so with where
+  they are, so leaving them costs the card nothing. The continuation and the day menu look at
+  the shoot's days and shots only, and a shoot folder is listed only when it receives something
+  tonight.
 - **Numbers follow the order shots were taken**, every card together, and carry on after the
   highest already on the drives for the same day, client and project (`counterExpression`
   matches the pattern with the number captured). With `{CAM}` in the name, each camera counts on
