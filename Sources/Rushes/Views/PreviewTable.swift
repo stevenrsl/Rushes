@@ -176,6 +176,14 @@ struct PreviewRows: Sendable {
                     size: file.size, camera: label(group.sourceID), note: Self.reason(file, settings))
             }
         }
+        for group in plan.groups where group.status == .leftOnCard {
+            let unticked = Set(group.leftOut.map(\.id))
+            for file in group.group.files where !unticked.contains(file.id) {
+                leftOut.append(Row(id: file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",
+                                   size: file.size, camera: label(group.sourceID),
+                                   note: "Prise du \(Format.day(group.day)), laissée sur la carte par choix"))
+            }
+        }
         for source in sources {
             for file in source.orphans {
                 leftOut.append(Row(id: file.id, status: .leftOut, name: file.name, original: file.relativePath, folder: "",

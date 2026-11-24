@@ -65,7 +65,7 @@ enum CardCleanup {
                     guard copies.count == mine.count else { continue }
                     items.append(item(file, copies: copies))
                 }
-            case .conflict, .unticked, .noDrive:
+            case .conflict, .unticked, .noDrive, .leftOnCard:
                 continue
             }
         }

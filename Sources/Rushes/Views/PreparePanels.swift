@@ -31,6 +31,16 @@ struct ShootBlock: View {
             if let shoot = ingest.plan.continuation, !ingest.isCopying {
                 ContinuationLine(shoot: shoot)
             }
+            if !ingest.isCopying {
+                ForEach(ingest.plan.spread.stragglers) { straggler in
+                    StragglerLine(
+                        straggler: straggler,
+                        target: ingest.fixedDay ?? ingest.plan.spread.target,
+                        filing: ingest.dayFiling[straggler.day] ?? .ownDay,
+                        choose: { ingest.dayFiling[straggler.day] = $0 == .ownDay ? nil : $0 }
+                    )
+                }
+            }
         }
     }
 
@@ -88,6 +98,95 @@ struct ShootBlock: View {
         case 1: return Format.day(days[0]).prefix(1).uppercased() + Format.day(days[0]).dropFirst()
         default: return "\(days.count) jours, un dossier chacun"
         }
+    }
+}
+
+/// Shots of a day apart from the shoot (`DaySpread`): said, and given a
+/// choice, unless every one of them is already on every drive.
+struct StragglerLine: View {
+    let straggler: DaySpread.Straggler
+    let target: ShootDay?
+    let filing: DayFiling
+    let choose: (DayFiling) -> Void
+    private var what: String { "\(straggler.described) du \(Format.day(straggler.day))" }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: straggler.allSaved ? "checkmark.circle" : "calendar")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(straggler.allSaved ? Palette.inkFaint : Palette.late)
+                .frame(width: 16)
+                .accessibilityHidden(true)
+            if straggler.allSaved {
+                Text(savedSentence)
+                    .font(TypeScale.meta)
+                    .foregroundStyle(Palette.inkFaint)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Aussi sur la carte : \(what).")
+                            .font(TypeScale.meta)
+                            .foregroundStyle(Palette.inkSoft)
+                            .fixedSize(horizontal: false, vertical: true)
+                        choice
+                    }
+                    Text(consequence)
+                        .font(TypeScale.meta)
+                        .foregroundStyle(filing == .leave ? Palette.late : Palette.inkFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var choice: some View {
+        Menu {
+            ForEach(DayFiling.allCases, id: \.self) { option in
+                Button(option.title) { choose(option) }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(filing.title)
+                    .font(TypeScale.meta.weight(.medium))
+                    .foregroundStyle(Palette.accentInk)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Palette.accentInk)
+                    .accessibilityHidden(true)
+            }
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Ce que deviennent les prises de ce jour-là, pour cette sauvegarde seulement.")
+    }
+
+    private var savedSentence: String {
+        let place = (straggler.savedIn ?? "").isEmpty ? "" : " dans « \(straggler.savedIn!) »"
+        return "Aussi sur la carte : \(what), déjà sur chaque disque\(place). Rien à refaire."
+    }
+
+    private var consequence: String {
+        let n = straggler.shots - straggler.saved
+        let subject = n > 1 ? "Ces \(n) prises sont" : "Cette prise est"
+        let s = n > 1 ? "s" : ""
+        var text: String
+        switch filing {
+        case .ownDay:
+            let folder = (straggler.folder ?? "").isEmpty ? "" : ", dans « \(straggler.folder!) »"
+            text = "\(subject) copiée\(s) à leur date, sous le client et le projet de ce soir\(folder)."
+        case .withShoot:
+            let day = target.map { " du \(Format.day($0))" } ?? ""
+            text = "\(subject) copiée\(s) dans ce tournage, numérotée\(s) après les prises\(day)."
+        case .leave:
+            text = "\(subject) laissée\(s) sur la carte, qui sera dite « à vérifier » et non formatable."
+        }
+        if straggler.saved > 0 {
+            text += " \(Format.count(straggler.saved, "autre")) déjà sur chaque disque, rien à refaire."
+        }
+        return text
     }
 }
 

@@ -42,6 +42,24 @@ struct SnapshotTests {
         }
     }
 
+    @Test func stragglers() throws {
+        let day = ShootDay(year: 2026, month: 11, day: 14)
+        let target = ShootDay(year: 2026, month: 11, day: 23)
+        var fresh = DaySpread.Straggler(day: day)
+        fresh.photos = 2
+        fresh.folder = "261114_Kaffi_Lexus"
+        var saved = fresh
+        saved.saved = 2
+        saved.savedIn = "261114_Renault_Clio/PHOTO/RAW"
+        let lines = VStack(alignment: .leading, spacing: 18) {
+            ForEach(DayFiling.allCases, id: \.self) { filing in
+                StragglerLine(straggler: fresh, target: target, filing: filing, choose: { _ in })
+            }
+            StragglerLine(straggler: saved, target: target, filing: .ownDay, choose: { _ in })
+        }.padding(.top, 40)
+        for dark in [false, true] { try save(lines, "stragglers", dark: dark) }
+    }
+
     @Test func speedGraph() throws {
         var history = ThroughputHistory()
         // Ten minutes from a card at about 280 MB/s with a dip, then the read-back.

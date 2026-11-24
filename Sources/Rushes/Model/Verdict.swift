@@ -117,6 +117,19 @@ enum Verdicts {
             reasons.append("Des noms de cette carte étaient déjà pris : ces prises n'ont pas été copiées.")
         }
 
+        // Shots of another day left on the card by choice: chosen, but still
+        // only there, so the card is never called formatable for them.
+        let left = mine.filter { $0.status == .leftOnCard }
+        if !left.isEmpty {
+            if level == .safe { level = .check }
+            let byDay = Dictionary(grouping: left, by: \.day)
+            for (day, groups) in byDay.sorted(by: { $0.key < $1.key }) {
+                let shots = DaySpread.Straggler(day: day, groups: groups.map(\.group))
+                let n = shots.shots
+                reasons.append("\(shots.described.prefix(1).uppercased() + shots.described.dropFirst()) du \(Format.day(day)) \(n > 1 ? "restent" : "reste") sur la carte, laissée\(n > 1 ? "s" : "") de côté : \(n > 1 ? "copie-les" : "copie-la") avant de formater.")
+            }
+        }
+
         let unrouted = mine.filter { $0.status == .noDrive }
         if !unrouted.isEmpty {
             level = .hold
