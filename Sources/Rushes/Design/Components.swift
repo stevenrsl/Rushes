@@ -421,6 +421,34 @@ struct StatusPill: View {
     }
 }
 
+/// The icon's thread (`Tools/make-icon.swift`, same points): in from the left
+/// as an SD card's bottom edge, round the card and its cut corner, and out,
+/// crossing itself; the contacts are three short strokes. Drawn in the tile's
+/// 824-point square, the part of the icon's 1024 canvas inside the tile.
+struct ThreadMark: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scale = min(rect.width, rect.height) / 824
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: rect.minX + (x - 100) * scale, y: rect.minY + (y - 100) * scale)
+        }
+        var path = Path()
+        path.move(to: p(100, 730))
+        path.addLine(to: p(640, 730))
+        path.addArc(tangent1End: p(690, 730), tangent2End: p(690, 680), radius: 50 * scale)
+        path.addLine(to: p(690, 362))
+        path.addLine(to: p(588, 260))
+        path.addLine(to: p(384, 260))
+        path.addArc(tangent1End: p(334, 260), tangent2End: p(334, 310), radius: 50 * scale)
+        path.addLine(to: p(334, 600))
+        path.addCurve(to: p(924, 806), control1: p(334, 850), control2: p(680, 845))
+        for x in [420, 492, 564] as [CGFloat] {
+            path.move(to: p(x, 340))
+            path.addLine(to: p(x, 410))
+        }
+        return path
+    }
+}
+
 /// A camera letter in its pastel, as Cairn marks a project.
 struct CameraBadge: View {
     let label: String

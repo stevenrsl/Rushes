@@ -2,10 +2,13 @@
 //
 //     swift Tools/make-icon.swift "$(pwd)"
 //
-// Writes Support/AppIcon.icns. A memory card in the forest at night: the card
-// in wool with its cut corner and its contacts, and on its label a crescent in
-// the app's pastel sage, the colour of the one button that matters. Drawn in
-// code so it follows the palette (Palette.swift) rather than being redrawn.
+// Writes Support/AppIcon.icns, and a 1024 preview in the temporary folder.
+// In the family of Fil's icon (2026-11-23): a pale tile and one thread of
+// accent crossing it from edge to edge. Fil's thread makes the cursive l of
+// its name; Rushes' draws the SD card it reads, cut corner and contacts, and
+// leaves for the drives, crossing itself as Fil's does. Sage paper, forest ink: `ground` and `accentInk` of the
+// forest ambiance (Palette.swift), the icon staying the forest whatever the
+// ambiance. Drawn in code so it follows the palette rather than being redrawn.
 
 import AppKit
 import CoreGraphics
@@ -27,13 +30,51 @@ func oklch(_ l: Double, _ c: Double, _ h: Double, _ a: Double = 1) -> CGColor {
     return CGColor(srgbRed: enc(r), green: enc(g), blue: enc(b), alpha: CGFloat(a))
 }
 
-let nightTop = oklch(0.36, 0.060, 155)
-let nightBottom = oklch(0.20, 0.035, 160)
-let card = oklch(0.962, 0.011, 118)
-let cardShade = oklch(0.85, 0.016, 120)
-let contact = oklch(0.76, 0.050, 95)
-let tungsten = oklch(0.86, 0.060, 150)
-let label = oklch(0.21, 0.025, 162)
+let paperTop = oklch(0.985, 0.008, 125)
+let paperBottom = oklch(0.925, 0.026, 140)
+let thread = oklch(0.46, 0.085, 155)
+
+/// The macOS tile: a superellipse of exponent 5, 824 wide, 100 from the edge, as Fil's.
+func tilePath() -> CGPath {
+    let path = CGMutablePath()
+    let steps = 720
+    for i in 0..<steps {
+        let t = Double(i) / Double(steps) * 2 * .pi
+        let c = cos(t), s = sin(t)
+        let x = 512 + 412 * copysign(pow(abs(c), 2.0 / 5), c)
+        let y = 512 + 412 * copysign(pow(abs(s), 2.0 / 5), s)
+        if i == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
+    }
+    path.closeSubpath()
+    return path
+}
+
+/// The thread, in a canvas whose y runs down (as an SVG's): in from the left
+/// as the card's bottom edge, up its right side, across the cut corner and the
+/// top, down its left side, and out, crossing where it came in.
+func threadPath() -> CGPath {
+    let p = CGMutablePath()
+    p.move(to: CGPoint(x: 10, y: 730))
+    p.addLine(to: CGPoint(x: 640, y: 730))
+    p.addArc(tangent1End: CGPoint(x: 690, y: 730), tangent2End: CGPoint(x: 690, y: 680), radius: 50)
+    p.addLine(to: CGPoint(x: 690, y: 362))
+    p.addLine(to: CGPoint(x: 588, y: 260))
+    p.addLine(to: CGPoint(x: 384, y: 260))
+    p.addArc(tangent1End: CGPoint(x: 334, y: 260), tangent2End: CGPoint(x: 334, y: 310), radius: 50)
+    p.addLine(to: CGPoint(x: 334, y: 600))
+    p.addCurve(to: CGPoint(x: 1010, y: 800), control1: CGPoint(x: 334, y: 850), control2: CGPoint(x: 700, y: 840))
+    return p
+}
+
+/// The card's contacts, three short strokes of the same thread under its top.
+func contactsPath() -> CGPath {
+    let p = CGMutablePath()
+    for x in [420, 492, 564] as [CGFloat] {
+        p.move(to: CGPoint(x: x, y: 340))
+        p.addLine(to: CGPoint(x: x, y: 410))
+    }
+    return p
+}
 
 /// Draws the icon on a 1024 canvas, scaled to `size`.
 func draw(size: Int) -> CGImage {
@@ -41,82 +82,42 @@ func draw(size: Int) -> CGImage {
     let ctx = CGContext(data: nil, width: size, height: size, bitsPerComponent: 8, bytesPerRow: 0,
                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
     ctx.scaleBy(x: s / 1024, y: s / 1024)
+    // From here y runs down, as in Fil's SVG.
+    ctx.translateBy(x: 0, y: 1024)
+    ctx.scaleBy(x: 1, y: -1)
+    let tile = tilePath()
 
-    // The macOS squircle: 824 wide, centred, with the shadow the grid leaves room for.
-    let tile = CGRect(x: 100, y: 100, width: 824, height: 824)
-    let tilePath = CGPath(roundedRect: tile, cornerWidth: 185, cornerHeight: 185, transform: nil)
+    // The tile and its soft shadow.
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: CGColor(gray: 0, alpha: 0.35))
-    ctx.addPath(tilePath)
-    ctx.setFillColor(nightBottom)
+    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 24, color: CGColor(gray: 0, alpha: 0.22))
+    ctx.addPath(tile)
+    ctx.setFillColor(paperBottom)
     ctx.fillPath()
     ctx.restoreGState()
 
     ctx.saveGState()
-    ctx.addPath(tilePath)
+    ctx.addPath(tile)
     ctx.clip()
-    let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [nightTop, nightBottom] as CFArray, locations: [0, 1])!
-    ctx.drawLinearGradient(gradient, start: CGPoint(x: 512, y: 924), end: CGPoint(x: 512, y: 100), options: [])
-    ctx.restoreGState()
+    let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [paperTop, paperBottom] as CFArray, locations: [0, 1])!
+    ctx.drawLinearGradient(gradient, start: CGPoint(x: 512, y: 100), end: CGPoint(x: 512, y: 924), options: [])
 
-    // The card, a little tilted, its top right corner cut as on an SD card.
-    ctx.saveGState()
-    ctx.translateBy(x: 512, y: 500)
-    ctx.rotate(by: -8 * .pi / 180)
-    let w: CGFloat = 420, h: CGFloat = 540, r: CGFloat = 38, cut: CGFloat = 110
-    let x0 = -w / 2, y0 = -h / 2, x1 = w / 2, y1 = h / 2
-    let body = CGMutablePath()
-    body.move(to: CGPoint(x: x0 + r, y: y0))
-    body.addLine(to: CGPoint(x: x1 - r, y: y0))
-    body.addArc(tangent1End: CGPoint(x: x1, y: y0), tangent2End: CGPoint(x: x1, y: y0 + r), radius: r)
-    body.addLine(to: CGPoint(x: x1, y: y1 - cut))
-    body.addLine(to: CGPoint(x: x1 - cut, y: y1))
-    body.addLine(to: CGPoint(x: x0 + r, y: y1))
-    body.addArc(tangent1End: CGPoint(x: x0, y: y1), tangent2End: CGPoint(x: x0, y: y1 - r), radius: r)
-    body.addLine(to: CGPoint(x: x0, y: y0 + r))
-    body.addArc(tangent1End: CGPoint(x: x0, y: y0), tangent2End: CGPoint(x: x0 + r, y: y0), radius: r)
-    body.closeSubpath()
-
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -18), blur: 40, color: CGColor(gray: 0, alpha: 0.45))
-    ctx.addPath(body)
-    ctx.setFillColor(card)
-    ctx.fillPath()
-    ctx.restoreGState()
-
-    // The contacts along the top.
-    for i in 0..<5 {
-        let cx = x0 + 58 + CGFloat(i) * 52
-        let contactRect = CGRect(x: cx, y: y1 - 150, width: 30, height: 92)
-        ctx.addPath(CGPath(roundedRect: contactRect, cornerWidth: 9, cornerHeight: 9, transform: nil))
-        ctx.setFillColor(contact)
-        ctx.fillPath()
-    }
-
-    // The label: night, and a crescent of tungsten.
-    let labelRect = CGRect(x: x0 + 44, y: y0 + 44, width: w - 88, height: 280)
-    ctx.addPath(CGPath(roundedRect: labelRect, cornerWidth: 22, cornerHeight: 22, transform: nil))
-    ctx.setFillColor(label)
-    ctx.fillPath()
-
-    let moonCenter = CGPoint(x: labelRect.midX - 6, y: labelRect.midY + 4)
-    let moonRadius: CGFloat = 92
-    ctx.saveGState()
-    ctx.addPath(CGPath(roundedRect: labelRect, cornerWidth: 22, cornerHeight: 22, transform: nil))
-    ctx.clip()
-    ctx.setFillColor(tungsten)
-    ctx.fillEllipse(in: CGRect(x: moonCenter.x - moonRadius, y: moonCenter.y - moonRadius, width: moonRadius * 2, height: moonRadius * 2))
-    // The night bites the disc from the upper right, leaving a crescent.
-    ctx.setFillColor(label)
-    ctx.fillEllipse(in: CGRect(x: moonCenter.x - moonRadius + 46, y: moonCenter.y - moonRadius + 30, width: moonRadius * 2, height: moonRadius * 2))
-    ctx.restoreGState()
-
-    // A faint edge where the card's face meets its bevel.
-    ctx.addPath(body)
-    ctx.setStrokeColor(cardShade)
-    ctx.setLineWidth(4)
+    // The thread. Thicker at small sizes, so it still reads at 16 px.
+    ctx.addPath(threadPath())
+    ctx.setStrokeColor(thread)
+    ctx.setLineWidth(size <= 64 ? 72 : 52)
+    ctx.setLineCap(.round)
+    ctx.setLineJoin(.round)
+    ctx.strokePath()
+    ctx.addPath(contactsPath())
+    ctx.setLineWidth(size <= 64 ? 56 : 40)
     ctx.strokePath()
     ctx.restoreGState()
+
+    // A hairline at the tile's edge, for light backgrounds.
+    ctx.addPath(tile)
+    ctx.setStrokeColor(CGColor(gray: 0, alpha: 0.06))
+    ctx.setLineWidth(2)
+    ctx.strokePath()
 
     return ctx.makeImage()!
 }
@@ -141,6 +142,7 @@ process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
 process.arguments = ["-c", "icns", iconset.path, "-o", output.path]
 try process.run()
 process.waitUntilExit()
-let preview = NSBitmapImageRep(cgImage: draw(size: 512))
-try preview.representation(using: .png, properties: [:])!.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("rushes-icon.png"))
+let previewURL = FileManager.default.temporaryDirectory.appendingPathComponent("rushes-icon.png")
+try NSBitmapImageRep(cgImage: draw(size: 1024)).representation(using: .png, properties: [:])!.write(to: previewURL)
 print(output.path)
+print(previewURL.path)

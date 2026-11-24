@@ -17,7 +17,7 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
 ./build.sh release-selfsigned                       # the beta's .dmg: self-signed "Rushes", not notarised
 Tools/make-signing-certificate.sh ~/backup.p12      # that certificate, made once; pins it in install.sh
-swift test --scratch-path /tmp/rushes-build         # 151 tests; benches and snapshots skipped unless asked
+swift test --scratch-path /tmp/rushes-build         # 152 tests; benches and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
@@ -361,7 +361,13 @@ button, `.accentLink` for the rest, a drawn checkbox, the wash at the top, `late
   in every ambiance. The tokens are read through `Theme.shared`, an `@Observable`, so a change
   redraws every window; `Ingest` keeps it equal to the settings.
 
-The icon is drawn from the same colours (`Tools/make-icon.swift`), always the forest.
+The icon is drawn from the same colours (`Tools/make-icon.swift`), always the forest. Since
+2026-11-23 it is of Fil's family: a pale tile (superellipse n=5) crossed edge to edge by one
+thread of `accentInk`, which here draws the SD card it reads (cut corner, three contacts) and
+leaves for the drives, crossing itself as Fil's does; Steven chose it over a tick and a forking
+thread, which said less of what Rushes does. Before any card,
+the empty preview shows that thread small in `accentLine` (`ThreadMark`, the same points), the
+one drawing in the app.
 
 **Support is asked in one place.** Rushes is free; the About window (`Support/Credits.rtf`, Ko-fi
 only since 2026-10-15, Steven's request), the README and `.github/FUNDING.yml` (GitHub Sponsors

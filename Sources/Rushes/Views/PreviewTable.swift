@@ -35,10 +35,20 @@ struct PreviewBlock: View {
                 }
             }
             if rows.isEmpty {
-                Text(emptyText)
-                    .font(TypeScale.meta)
-                    .foregroundStyle(Palette.inkFaint)
-                    .frame(maxWidth: .infinity, minHeight: 90)
+                VStack(spacing: 10) {
+                    // Before any card, the icon's thread, quietly: the one
+                    // drawing in the app, and only where nothing else is.
+                    if ingest.cards.isEmpty {
+                        ThreadMark()
+                            .stroke(Palette.accentLine.opacity(0.55), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                            .frame(width: 56, height: 56)
+                            .accessibilityHidden(true)
+                    }
+                    Text(emptyText)
+                        .font(TypeScale.meta)
+                        .foregroundStyle(Palette.inkFaint)
+                }
+                .frame(maxWidth: .infinity, minHeight: 90)
             } else {
                 Table(rows) {
                     TableColumn("") { row in

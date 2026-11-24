@@ -73,4 +73,14 @@ struct SnapshotTests {
             try save(SpeedGraph(history: history, current: 415e6).padding(.top, 40), "speed-graph", dark: dark)
         }
     }
+
+    @Test func threadMark() throws {
+        for dark in [false, true] {
+            let mark = ThreadMark()
+                .stroke(Palette.accentLine.opacity(0.55), style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+                .frame(width: 56, height: 56)
+                .padding(40)
+            try save(mark, "thread-mark", dark: dark)
+        }
+    }
 }
