@@ -17,7 +17,7 @@ and Journal's Mac app: SwiftPM without Xcode, `build.sh` assembles the bundle.
 ./build.sh release-signed                           # Developer ID, notarised, build/Rushes-<version>.dmg
 ./build.sh release-selfsigned                       # the beta's .dmg: self-signed "Rushes", not notarised
 Tools/make-signing-certificate.sh ~/backup.p12      # that certificate, made once; pins it in install.sh
-swift test --scratch-path /tmp/rushes-build         # 152 tests; benches and snapshots skipped unless asked
+swift test --scratch-path /tmp/rushes-build         # 154 tests; benches and snapshots skipped unless asked
 RUSHES_BENCH=1 swift test -c release -Xswiftc -enable-testing --scratch-path /tmp/rushes-release --filter Bench
 swift Tools/make-icon.swift "$(pwd)"                # redraws Support/AppIcon.icns
 swift Tools/make-test-card.swift sony /Volumes/X    # a fake card to try the app (also `canon`, `dji`)
@@ -275,11 +275,15 @@ A pattern must hold `{NUM}` or `{ORIG}`.
   they are, so leaving them costs the card nothing. The continuation and the day menu look at
   the shoot's days and shots only, and a shoot folder is listed only when it receives something
   tonight.
-- **Numbers follow the order shots were taken**, every card together, and carry on after the
-  highest already on the drives for the same day, client and project (`counterExpression`
-  matches the pattern with the number captured). With `{CAM}` in the name, each camera counts on
-  its own, as A-cam and B-cam do on a set (decided 2026-09-21). Photos and videos share one
-  counter unless the setting says otherwise.
+- **Numbers go one camera after the other**, by letter (A, then B, B2, D; a card without a
+  letter last), in the order shots were taken within each camera, on one counter for every
+  camera, and carry on after the highest already on the drives for the same day, client and
+  project, whatever its camera (`counterExpression` matches the pattern with the number
+  captured, the letters known tried longest first so B2 in `B20005` is not B and 20005). Two
+  cards of one letter are one camera and interleave. Until 2026-11-25, with `{CAM}` in the name,
+  each camera counted on its own (decided 2026-09-21), and without it the bodies interleaved by
+  time; A_0005 and B_0005 side by side were two shots under one number, which the edit did not
+  want. Photos and videos keep their own counters unless the setting says otherwise.
 - **Dates**: EXIF DateTimeOriginal from the group's JPEG (fastest header) for photos, read in
   parallel; the file system's date (earlier of creation and modification = start of recording)
   for video, because many cameras write local time where MP4 says UTC. All read as the camera's

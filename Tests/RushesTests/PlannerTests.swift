@@ -45,15 +45,15 @@ struct PlannerTests {
         ])
     }
 
-    @Test("two cards are numbered together in the order the shots were taken")
+    @Test("two cameras are numbered on one counter, one block after the other")
     func twoBodies() {
         let base = local(2026, 9, 21, 20, 0)
         var s = settings
         s.layout = FolderPreset.flat.layout
         s.folderPattern = ""
         let cards = [
-            source("A", "A", [file("DCIM/100MSDCF/DSC00001.JPG", at: base), file("DCIM/100MSDCF/DSC00002.JPG", at: base.addingTimeInterval(20))]),
             source("B", "B", [file("DCIM/100CANON/IMG_0001.JPG", at: base.addingTimeInterval(10))]),
+            source("A", "A", [file("DCIM/100MSDCF/DSC00001.JPG", at: base), file("DCIM/100MSDCF/DSC00002.JPG", at: base.addingTimeInterval(20))]),
         ]
         let plan = Planner.plan(sources: cards, settings: s, fixedDay: nil, drives: [drive], index: { _, _ in DestinationIndex() })
         #expect(paths(plan) == [
@@ -61,16 +61,54 @@ struct PlannerTests {
             "260921_SR_Kaffi_Lexus-RX_0002.JPG",
             "260921_SR_Kaffi_Lexus-RX_0003.JPG",
         ])
-        #expect(plan.toCopy.map(\.sourceID) == ["A", "B", "A"])
+        #expect(plan.toCopy.map(\.sourceID) == ["A", "A", "B"])
 
-        // With the camera in the name, each camera counts on its own, as A-cam
-        // and B-cam clips do on a set.
+        // With the camera in the name, still one counter: A0005 and B0005
+        // would be two shots under one number.
         s.namePattern = NamePreset.multicam.pattern
         let multicam = Planner.plan(sources: cards, settings: s, fixedDay: nil, drives: [drive], index: { _, _ in DestinationIndex() })
         #expect(paths(multicam) == [
             "260921_SR_Kaffi_Lexus-RX_A0001.JPG",
-            "260921_SR_Kaffi_Lexus-RX_B0001.JPG",
             "260921_SR_Kaffi_Lexus-RX_A0002.JPG",
+            "260921_SR_Kaffi_Lexus-RX_B0003.JPG",
+        ])
+    }
+
+    @Test("a card of any camera carries on after every camera's numbers on the drive")
+    func carriesOnAcrossCameras() {
+        var s = settings
+        s.namePattern = NamePreset.multicam.pattern
+        let existing = DestinationIndex(stems: [.photo: [
+            "260921_SR_Kaffi_Lexus-RX_A0040",
+            "260921_SR_Kaffi_Lexus-RX_B20057",
+            "260921_SR_Kaffi_Other_A0900",
+        ]])
+        let plan = Planner.plan(
+            sources: [source("A", "A", [file("DCIM/100MSDCF/DSC00100.JPG", at: local(2026, 9, 21, 22, 0))])],
+            settings: s, fixedDay: nil, drives: [drive], index: { _, _ in existing }
+        )
+        // B2's 0057, not B's 20057.
+        #expect(plan.toCopy.first?.baseName == "260921_SR_Kaffi_Lexus-RX_A0058")
+    }
+
+    @Test("photos and videos keep their own counters, each camera in a block")
+    func photosAndVideosApart() {
+        let base = local(2026, 9, 21, 20, 0)
+        var s = settings
+        s.layout = FolderPreset.flat.layout
+        s.folderPattern = ""
+        s.namePattern = NamePreset.cameraLast.pattern
+        s.sharedCounter = false
+        let cards = [
+            source("A", "A", [file("DCIM/100MSDCF/DSC00001.JPG", at: base), file("DCIM/100MSDCF/C0001.MP4", at: base.addingTimeInterval(5))]),
+            source("D", "D", [file("DCIM/100MEDIA/DJI_0001.MP4", at: base.addingTimeInterval(1)), file("DCIM/100MEDIA/DJI_0002.JPG", at: base.addingTimeInterval(2))]),
+        ]
+        let plan = Planner.plan(sources: cards, settings: s, fixedDay: nil, drives: [drive], index: { _, _ in DestinationIndex() })
+        #expect(Set(paths(plan)) == [
+            "260921_SR_Kaffi_Lexus-RX_0001_A.JPG",
+            "260921_SR_Kaffi_Lexus-RX_0001_A.MP4",
+            "260921_SR_Kaffi_Lexus-RX_0002_D.JPG",
+            "260921_SR_Kaffi_Lexus-RX_0002_D.MP4",
         ])
     }
 

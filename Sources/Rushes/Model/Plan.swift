@@ -201,8 +201,11 @@ struct DestinationIndex: Sendable {
 enum Planner {
     /// Names every shot of every card and says where each file goes.
     ///
-    /// Shots are numbered in the order they were taken, all cards together, so
-    /// two bodies on one shoot interleave. Numbers carry on from the highest
+    /// Shots are numbered one camera after the other, by its letter, and in
+    /// the order they were taken within each camera: every A-cam shot, then
+    /// every B-cam shot, on one counter (asked 2026-11-25; before, two bodies
+    /// interleaved by time, or with {CAM} in the name each counted from 0001).
+    /// Two cards of one letter are one camera and interleave. Numbers carry on from the highest
     /// already on the drives for the same day, client and project. A shot is
     /// left out only where every drive both lists it and still holds it, at its
     /// size: on one drive only, or listed but gone, it is copied again, because
@@ -232,6 +235,12 @@ enum Planner {
         let straggling = Set(spread.stragglers.map(\.day))
         let items = sources.flatMap { source in source.groups.map { (source, $0, straggling.contains(ownDay($0))) } }.sorted { a, b in
             if a.2 != b.2 { return !a.2 }
+            let ca = Sanitize.code(a.0.cameraLabel), cb = Sanitize.code(b.0.cameraLabel)
+            if ca != cb {
+                // A card without a letter comes after the lettered ones.
+                if ca.isEmpty != cb.isEmpty { return cb.isEmpty }
+                return ca.localizedStandardCompare(cb) == .orderedAscending
+            }
             if a.1.captureDate != b.1.captureDate { return a.1.captureDate < b.1.captureDate }
             if a.0.id != b.0.id { return order[a.0.id]! < order[b.0.id]! }
             return a.1.key < b.1.key
@@ -263,6 +272,8 @@ enum Planner {
         timeFormat.dateFormat = "HHmmss"
 
         var counters: [String: Int] = [:]
+        // Every letter a name on the drives may hold, to read its number.
+        let letters = sources.map { Sanitize.code($0.cameraLabel) } + settings.cameras.map { Sanitize.code($0.label) }
         var taken: Set<String> = []
         var planned: [PlannedGroup] = []
         var folders: [String] = []
@@ -357,7 +368,7 @@ enum Planner {
                 let scope = template.counterScope(values) + "\u{0}" + shootFolder + "\u{0}" + (category?.rawValue ?? "")
                 if counters[scope] == nil {
                     var highest = 0
-                    if let expression = template.counterExpression(values) {
+                    if let expression = template.counterExpression(values, cameras: letters) {
                         for drive in drives {
                             let stems = indexFor(drive, shootFolder).stems
                             // The names lying there, and the names this drive

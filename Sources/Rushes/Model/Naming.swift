@@ -184,16 +184,23 @@ struct NameTemplate: Hashable, Sendable {
     }
 
     /// Matches names this pattern made for the same day, client and project,
-    /// and captures their number, so a second card carries on where the first
-    /// stopped instead of starting again at 0001.
-    func counterExpression(_ values: NameValues) -> NSRegularExpression? {
+    /// whatever the camera, and captures their number, so a second card
+    /// carries on where the first stopped instead of starting again at 0001.
+    /// The letters known are tried first, longest first, so B2 in "B20005"
+    /// is not read as B followed by 20005; a letter nobody knows any more
+    /// still matches, at worst giving a lower number, which the name
+    /// conflict then holds back.
+    func counterExpression(_ values: NameValues, cameras: [String] = []) -> NSRegularExpression? {
         guard uses(.number) else { return nil }
+        let letters = Set(cameras.filter { !$0.isEmpty }).sorted { $0.count != $1.count ? $0.count > $1.count : $0 < $1 }
+        let camera = "(?:" + (letters.map(NSRegularExpression.escapedPattern(for:)) + ["[A-Za-z0-9]{0,3}"]).joined(separator: "|") + ")"
         let source = parts.map { part -> String in
             switch part {
             case .literal(let text): return NSRegularExpression.escapedPattern(for: Sanitize.fileName(text))
             case .token(.number): return "(\\d+)"
             case .token(.original): return ".+"
             case .token(.time): return "\\d{6}"
+            case .token(.camera): return camera
             case .token(let token): return NSRegularExpression.escapedPattern(for: Sanitize.fileName(values.value(of: token)))
             }
         }.joined()
@@ -201,12 +208,15 @@ struct NameTemplate: Hashable, Sendable {
     }
 
     /// What two shots share when they count from the same number: the name
-    /// with the number, the time and the original name left out.
+    /// with the number, the time, the original name and the camera left out.
+    /// Every camera counts on one counter, each in its own block (asked
+    /// 2026-11-25): A_0005 and B_0005 side by side were two shots under one
+    /// number.
     func counterScope(_ values: NameValues) -> String {
         parts.map { part -> String in
             switch part {
             case .literal(let text): return text
-            case .token(.number), .token(.original), .token(.time): return "\u{1}"
+            case .token(.number), .token(.original), .token(.time), .token(.camera): return "\u{1}"
             case .token(let token): return values.value(of: token)
             }
         }.joined().lowercased()
@@ -244,9 +254,9 @@ enum NamePreset: String, CaseIterable, Identifiable, Sendable {
 
     var detail: String {
         switch self {
-        case .cameraLast: "La lettre de la carte après le numéro : 0001_A, 0001_D."
+        case .cameraLast: "La lettre de la carte après le numéro, chaque caméra à la suite : 0001_A, 0002_A, puis 0003_D."
         case .standard: "Le modèle de base, sans caméra."
-        case .multicam: "La lettre de chaque carte devant le numéro : A0001, B0001."
+        case .multicam: "La lettre de chaque carte devant le numéro, chaque caméra à la suite : A0001, A0002, puis B0003."
         case .original: "Garde le nom de l'appareil au bout, pour retrouver un fichier cité par un client."
         case .longDate: "La date sur huit chiffres."
         }
